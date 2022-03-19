@@ -15,7 +15,7 @@ fname = 'output/mobilenetquantpreds.npy' if args.type == 'quant' else 'output/mo
 with open(fname, 'rb') as f:
     quantpreds = np.load(f)
 
-quant_pred_labels = quantpreds.argmax(axis=1)-1 # -1 because hack
+quant_pred_labels = quantpreds.argmax(axis=1)
 
 print(labels, quant_pred_labels)
 print(np.mean(labels == quant_pred_labels))
