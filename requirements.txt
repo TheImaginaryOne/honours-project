@@ -1,4 +1,1 @@
 tensorflow-cpu==2.8.0
-jupyter==1.0.0
-jupyterlab==3.3.2
-tqdm==4.63.0
