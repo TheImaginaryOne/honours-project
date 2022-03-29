@@ -34,9 +34,9 @@ def get_images(images_dir):
     # sort by filenmae only. Important for labels compatibility
     image_files.sort(key=lambda f: f.split("/")[-1])
 
-    assert len(image_files) == 50000
+    split_point = len(image_files) // 5
     # first is validation; second is testing
-    return (image_files[:10000], image_files[10000:])
+    return (image_files[:split_point], image_files[split_point:])
 
 class CustomImageGen(tf.keras.utils.Sequence):
     
