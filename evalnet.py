@@ -1,13 +1,13 @@
-import tensorflow as tf
 import os
 import datetime
 import argparse
 import numpy as np
 import tqdm
-from tensorflow.keras.applications.mobilenet import MobileNet
-from utils import process_img, get_images, get_image_gen
 
-from tensorflow.python.client import timeline
+import torch
+import torchvision.models as models
+from torch.utils.data import DataLoader
+from utils import process_img, get_images, CustomImageData
 
 parser = argparse.ArgumentParser("mobilenet")
 
@@ -24,24 +24,29 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 def test_accuracy(net, image_gen):
 
-    preds = net.predict(image_gen, verbose=1)
+    loader = DataLoader(image_gen, batch_size=20)
 
-    with open('output/mobilenetpreds.npy', 'wb') as f:
-        np.save(f, preds)
+    all_preds = []
+    with torch.no_grad():
+        for X in tqdm.tqdm(loader):
+            preds = net(X)
+            # convert output to numpy
+            preds_np = preds.cpu().detach().numpy()
+            all_preds.append(preds_np)
+
+
+    with open('output/floatpreds.npy', 'wb') as f:
+        concated = np.concatenate(all_preds)
+        print(concated.shape)
+        np.save(f, concated)
 
 def get_intermediate(net, image_gen):
-    features_list = [layer.output for layer in net.layers]
-
-    extract_net = tf.keras.Model(inputs = net.input, outputs = features_list)
+    #features_list = [layer.output for layer in net.layers]
 
     log_dir = os.path.join(args.log_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     
-    w = tf.summary.create_file_writer(args.log_dir)
-    features_list = extract_net.predict(image_gen)
-
-    features = batch.predict(image_gen, verbose=1)
-    for batch in tqdm.tqdm(image_gen):
-        run(batch)
+    #w = tf.summary.create_file_writer(args.log_dir)
+    #features_list = extract_net.predict(image_gen)
 
 def main(args):
     """ Test the network! """
@@ -49,18 +54,13 @@ def main(args):
 #    quant = args.type == "quant"
 #    print(f"Type: {args.type}")
 
-    img_height = 224
-    img_width = 224
-    batch_size = 50
-
     validation_files, testing_files = get_images(images_dir)
 
     # train loop
     #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
-    net = tf.keras.applications.VGG16(weights = 'imagenet')
-    print(net.layers)
+    net = models.vgg16(pretrained=True)
 
-    image_gen = get_image_gen(testing_files)
+    image_gen = CustomImageData(testing_files)
     if args.which == 'test-float':
         test_accuracy(net, image_gen)
     elif args.which == 'log-fixed':
