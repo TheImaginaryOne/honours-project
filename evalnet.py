@@ -64,12 +64,12 @@ def main(args):
     validation_files, testing_files = get_images(images_dir)
 
     # train loop
-    net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
-    #net = tf.keras.applications.resnet50.ResNet50(weights = 'imagenet')
+    #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
+    net = tf.keras.applications.VGG16(weights = 'imagenet')
     print(net.layers)
 
     image_gen = get_image_gen(testing_files)
-    #test_accuracy(net, image_gen)
+    test_accuracy(net, image_gen)
     #get_intermediate(net, image_gen)
 
 main(args)
