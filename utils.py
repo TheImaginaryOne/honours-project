@@ -4,11 +4,12 @@ import numpy as np
 import torch
 import PIL
 from torchvision import transforms as T
+from torchvision.transforms import InterpolationMode
 
 normalize = T.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 
-process_img = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor(), normalize])
+process_img = T.Compose([T.Resize(256, interpolation=InterpolationMode.BICUBIC), T.CenterCrop(224), T.ToTensor(), normalize])
 
 # Get image path to tune the classifier quantiser params.
 def get_images(images_dir):
@@ -28,7 +29,7 @@ class CustomImageData(torch.utils.data.Dataset):
     
     def __getitem__(self, index):
         file_path = self.file_paths[index]
-        img = PIL.Image.open(file_path)
+        img = PIL.Image.open(file_path).convert('RGB')
         img = process_img(img)
         return img
     

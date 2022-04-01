@@ -43,7 +43,11 @@ def test_accuracy(net, image_gen):
 def get_intermediate(net, image_gen):
     #features_list = [layer.output for layer in net.layers]
 
-    log_dir = os.path.join(args.log_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    #log_dir = os.path.join(args.log_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+
+    print(net)
+    for name, layer in net.named_parameters():
+        print(name)
     
     #w = tf.summary.create_file_writer(args.log_dir)
     #features_list = extract_net.predict(image_gen)
@@ -58,7 +62,11 @@ def main(args):
 
     # train loop
     #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
-    net = models.vgg16(pretrained=True)
+    net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
+    #net = models.vgg16(pretrained=True)
+
+    # turn off some features for inference time
+    net.eval()
 
     image_gen = CustomImageData(testing_files)
     if args.which == 'test-float':
