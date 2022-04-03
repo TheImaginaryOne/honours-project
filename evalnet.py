@@ -3,11 +3,13 @@ import datetime
 import argparse
 import numpy as np
 import tqdm
+import pickle
 
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from utils import process_img, get_images, CustomImageData
+from lib.utils import process_img, get_images, CustomImageData, get_net
+from lib.layer_tracker import HistogramTracker
 
 parser = argparse.ArgumentParser("mobilenet")
 
@@ -23,6 +25,8 @@ args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 def test_accuracy(net, image_gen):
+    # turn off some features for inference time (IMPORTANT)
+    net.eval()
 
     loader = DataLoader(image_gen, batch_size=20)
 
@@ -41,16 +45,38 @@ def test_accuracy(net, image_gen):
         np.save(f, concated)
 
 def get_intermediate(net, image_gen):
-    #features_list = [layer.output for layer in net.layers]
-
-    #log_dir = os.path.join(args.log_dir, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    net.eval()
 
     print(net)
-    for name, layer in net.named_parameters():
-        print(name)
+
+    # Log all activations (outputs) of relevant layers
+    output_layers = [net.features[i] for i in [0, 2, 5, 7, 10, 12, 15, 17, 20]] + [net.avgpool] + [net.classifier[i] for i in [1, 4, 6]]
+    hist_tracker = [HistogramTracker() for i in range(len(output_layers))]
+
+    def hist_tracker_hook(hist_tracker):
+        def f(module, input, output):
+            hist_tracker.update(output)
+        return f
+    def hist_tracker_input_hook(hist_tracker):
+        def f(module, input, output):
+            hist_tracker.update(input[0])
+        return f
+
+    for i, layer in enumerate(output_layers):
+        if i == 0:
+            layer.register_forward_hook(hist_tracker_input_hook(hist_tracker[i]))
+        else:
+            layer.register_forward_hook(hist_tracker_hook(hist_tracker[i]))
     
-    #w = tf.summary.create_file_writer(args.log_dir)
-    #features_list = extract_net.predict(image_gen)
+    loader = DataLoader(image_gen, batch_size=20)
+    with torch.no_grad():
+        for X in tqdm.tqdm(loader):
+            preds = net(X)
+
+    histograms = [(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
+
+    with open(r"output/outputhistogram.pkl", "wb") as output_file:
+        pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
 
 def main(args):
     """ Test the network! """
@@ -62,16 +88,14 @@ def main(args):
 
     # train loop
     #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
-    net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
+    net = get_net()
     #net = models.vgg16(pretrained=True)
 
-    # turn off some features for inference time
-    net.eval()
-
-    image_gen = CustomImageData(testing_files)
     if args.which == 'test-float':
+        image_gen = CustomImageData(testing_files)
         test_accuracy(net, image_gen)
     elif args.which == 'log-fixed':
+        image_gen = CustomImageData(validation_files)
         get_intermediate(net, image_gen)
     else:
         print("No task selected.")

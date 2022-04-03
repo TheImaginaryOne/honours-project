@@ -10,6 +10,10 @@ normalize = T.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 
 process_img = T.Compose([T.Resize(256, interpolation=InterpolationMode.BICUBIC), T.CenterCrop(224), T.ToTensor(), normalize])
+    
+def get_net():
+    net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
+    return net
 
 # Get image path to tune the classifier quantiser params.
 def get_images(images_dir):
