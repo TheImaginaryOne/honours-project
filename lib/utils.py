@@ -21,7 +21,7 @@ def get_images(images_dir):
     # sort by filenmae only. Important for labels compatibility
     image_files.sort(key=lambda f: f.split("/")[-1])
 
-    split_point = len(image_files) // 5
+    split_point = len(image_files) // 10
     # first is validation; second is testing
     return (image_files[:split_point], image_files[split_point:])
 
