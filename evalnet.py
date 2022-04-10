@@ -10,15 +10,15 @@ import torchvision.models as models
 from torch.utils.data import DataLoader
 from lib.utils import process_img, get_images, CustomImageData, get_net
 from lib.layer_tracker import HistogramTracker
+from lib.quantnet import test_quant
 
-parser = argparse.ArgumentParser("mobilenet")
+parser = argparse.ArgumentParser("quant-net")
+parser.add_argument("images_dir", help="images directory", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
 parser_test = subparsers.add_parser('test-float')
-parser_test.add_argument("images_dir", help="images directory", type=str)
-
 parser_log = subparsers.add_parser('log-fixed')
-parser_log.add_argument("images_dir", help="images directory", type=str)
+parser_test_fixed = subparsers.add_parser('test-fixed')
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
@@ -97,6 +97,11 @@ def main(args):
     elif args.which == 'log-fixed':
         image_gen = CustomImageData(validation_files)
         get_intermediate(net, image_gen)
+    elif args.which == 'test-fixed':
+        image_gen = CustomImageData(testing_files)
+        with open("output/outputhistogram.pkl", "rb") as f:
+            histograms = pickle.load(f)
+        test_quant(net, histograms, image_gen) # in other module
     else:
         print("No task selected.")
 
