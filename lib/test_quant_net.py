@@ -12,4 +12,4 @@ def test_quant_min_max():
     tensor = torch.Tensor([-1.7, 5.6, 7.1, -7.8, -9.1])
 
     quantized = quantize_tensor_min_max(tensor, 3)
-    assert torch.equal(torch.Tensor([-2, 6, 6, -8, -8]), quantized)
+    assert torch.equal(torch.Tensor([0, 4, 8, -8, -8]), quantized)
