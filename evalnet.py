@@ -84,7 +84,7 @@ def main(args):
 #    quant = args.type == "quant"
 #    print(f"Type: {args.type}")
 
-    validation_files, testing_files = get_images(images_dir)
+    testing_files = get_images(images_dir)
 
     # train loop
     #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
@@ -95,7 +95,7 @@ def main(args):
         image_gen = CustomImageData(testing_files)
         test_accuracy(net, image_gen)
     elif args.which == 'log-fixed':
-        image_gen = CustomImageData(validation_files)
+        image_gen = CustomImageData(testing_files)
         get_intermediate(net, image_gen)
     elif args.which == 'test-fixed':
         image_gen = CustomImageData(testing_files)

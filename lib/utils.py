@@ -16,14 +16,13 @@ def get_net():
     return net
 
 # Get image path to tune the classifier quantiser params.
-def get_images(images_dir):
+def get_images(images_dir) -> list[str]:
     image_files = [os.path.join(images_dir, d) for d in os.listdir(images_dir)]
     # sort by filenmae only. Important for labels compatibility
     image_files.sort(key=lambda f: f.split("/")[-1])
 
-    split_point = len(image_files) // 10
     # first is validation; second is testing
-    return (image_files[:split_point], image_files[split_point:])
+    return image_files
 
 class CustomImageData(torch.utils.data.Dataset):
     
