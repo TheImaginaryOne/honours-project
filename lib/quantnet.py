@@ -8,19 +8,26 @@ def quantize_tensor(input: torch.Tensor, bit_width: int, scale: int) -> torch.Te
     """ Fake quantize utility """
     return torch.fake_quantize_per_tensor_affine(input, scale, 0, -2**(bit_width-1), 2**(bit_width - 1) - 1)
 
+def min_pow_2_scale(min_val: float, max_val: float, bit_width: int):
+    """ Min power of 2 to represent """
+    # this only works if this is true
+    assert min_val <= 0
+    assert max_val >= 0
+    x = min_pow_2(min_val / (-2**(bit_width-1) - 1./2))
+    y = min_pow_2(max_val / (2**(bit_width-1) - 1./2))
+    return max(x, y)
+
+
 def quantize_tensor_min_max(input: torch.Tensor, bit_width: int) -> torch.Tensor:
     min_val, max_val = torch.aminmax(input)
     # Minimum power of 2 required to represent all tensor values
-    pow_2 = max(min_pow_2(max_val / (1 - 1 / 2**(bit_width + 1))),
-            min_pow_2(min_val / (-1 - 1 / 2**(bit_width + 1))))
-
-    scale = 2**(pow_2 - bit_width + 1)
+    scale = 2**min_pow_2_scale(min_val.item(), max_val.item(), bit_width)
     tensor = quantize_tensor(input, bit_width, scale)
 
     # Sanity check that quantization works properly
     m = torch.max(torch.abs(tensor - input))
     #print(tensor - input)
-    assert m < scale, f"{m}, {pow_2}, {bit_width}"
+    assert m < scale, f"{m}, {bit_width}"
     return tensor
 
 class FakeQuantize(nn.Module):
@@ -114,11 +121,9 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
         max_val = (np.nonzero(histogram)[0][-1] - len(histogram) // 2 + 1) / len(histogram) * 2**(pow_2 + 1)
         #print(max_val)
         min_val = (np.nonzero(histogram)[0][0] - len(histogram) // 2) / len(histogram) * 2**(pow_2 + 1)
-        pow_2 = max(min_pow_2(max_val / (1 - 1 / 2**(bit_width + 1))),
-                min_pow_2(min_val / (-1 - 1 / 2**(bit_width + 1))))
 
         fake_quant.bit_width = bit_width
-        scale = 2**(pow_2 - bit_width + 1)
+        scale = 2**min_pow_2_scale(min_val, max_val, bit_width)
         fake_quant.scale = scale
         #print("-", pow_2)
 
