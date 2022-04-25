@@ -19,6 +19,7 @@ subparsers = parser.add_subparsers(dest='which') # store subcommand name in "whi
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
 parser_test_fixed = subparsers.add_parser('test-fixed')
+parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
@@ -101,7 +102,7 @@ def main(args):
         image_gen = CustomImageData(testing_files)
         with open("output/outputhistogram.pkl", "rb") as f:
             histograms = pickle.load(f)
-        test_quant(net, histograms, image_gen) # in other module
+        test_quant(net, histograms, image_gen, args.quant_config) # in other module
     else:
         print("No task selected.")
 

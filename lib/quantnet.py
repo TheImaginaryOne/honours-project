@@ -37,7 +37,13 @@ class FakeQuantize(nn.Module):
         self.scale = scale
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return quantize_tensor(input, self.bit_width, self.scale)
+        min_val, max_val = -2**(self.bit_width-1), 2**(self.bit_width - 1) - 1
+        # Use "floor" function to simulate bit truncate
+        torch.floor(input / self.scale, out=input)
+        torch.clamp(input, min_val, max_val, out=input)
+        input *= self.scale
+        #print(self.scale, self.bit_width)
+        return input
 
 class VggUnit(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, max_pool: bool):
@@ -106,14 +112,19 @@ def make_vgg11() -> QuantisedVgg:
             (512, True)]
     return QuantisedVgg(make_layers(layers))
 
-def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]]) -> QuantisedVgg:
+class QuantConfig:
+    def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
+        self.activation_bit_widths = activation_bit_widths
+        self.weight_bit_widths = weight_bit_widths
+
+def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], quant_config: QuantConfig) -> QuantisedVgg:
     quant_net = make_vgg11()
 
-    bit_width = 8
     fake_quants = [quant_net.quantize] + [cast(VggUnit, unit).quantize for unit in quant_net.features] \
             + [cast(FakeQuantize, quant_net.avgpool[1])] \
             + [cast(FakeQuantize, quant_net.classifier[i]) for i in [1, 4, 7]]
 
+    i = 0
     # set fake_quant layers
     for (pow_2, histogram), fake_quant in zip(activation_histograms, fake_quants):
         #print(pow_2)
@@ -122,32 +133,42 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
         #print(max_val)
         min_val = (np.nonzero(histogram)[0][0] - len(histogram) // 2) / len(histogram) * 2**(pow_2 + 1)
 
-        fake_quant.bit_width = bit_width
-        scale = 2**min_pow_2_scale(min_val, max_val, bit_width)
+        fake_quant.bit_width = quant_config.activation_bit_widths[i]
+        scale = 2**min_pow_2_scale(min_val, max_val, quant_config.activation_bit_widths[i])
         fake_quant.scale = scale
         #print("-", pow_2)
+        i += 1
 
     output_feature_layers = [net.features[i] for i in [0, 3, 6, 8, 11, 13, 16, 18]]
     classifier_layers = [net.classifier[i] for i in [0, 3, 6]]
 
     # copy weights
     for i, layer in enumerate(output_feature_layers):
-        quant_net.features[i].conv2d.weight = nn.Parameter(quantize_tensor_min_max(layer.weight, bit_width))
-        quant_net.features[i].conv2d.bias = nn.Parameter(quantize_tensor_min_max(layer.bias, bit_width))
-    for i, layer in zip([0, 3, 6], classifier_layers):
-        quant_net.classifier[i].weight = nn.Parameter(quantize_tensor_min_max(layer.weight, bit_width))
-        quant_net.classifier[i].bias = nn.Parameter(quantize_tensor_min_max(layer.bias, bit_width))
+        quant_net.features[i].conv2d.weight = nn.Parameter(quantize_tensor_min_max(layer.weight, quant_config.weight_bit_widths[i][0]))
+        quant_net.features[i].conv2d.bias = nn.Parameter(quantize_tensor_min_max(layer.bias, quant_config.weight_bit_widths[i][1]))
+    for i, layer, j in zip([0, 3, 6], classifier_layers, range(len(output_feature_layers), len(output_feature_layers) + 3)):
+        # just an offset
+        quant_net.classifier[i].weight = nn.Parameter(quantize_tensor_min_max(layer.weight, quant_config.weight_bit_widths[j][0]))
+        quant_net.classifier[i].bias = nn.Parameter(quantize_tensor_min_max(layer.bias, quant_config.weight_bit_widths[j][1]))
 
     return quant_net
 
-def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset):
+def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str):
     import tqdm
+    configs = {'8b': QuantConfig([8] * 13, [(8,8)] * 11), '7b': QuantConfig([7] * 13, [(7,7)] * 11)}
+    if quant_config_name not in configs:
+        print("Invalid configuration, try one of", configs.keys())
+        return
+    config = configs[quant_config_name]
     with torch.no_grad():
-        quant_net = setup_quant_net(net, activation_histograms)
+        #config = QuantConfig([4] * 13, [(4,4)] * 11)
+        #config = QuantConfig([6] * 13, [(6,6)] * 11)
+
+        quant_net = setup_quant_net(net, activation_histograms, config)
         all_preds = []
 
 
-        loader = torch.utils.data.DataLoader(images, batch_size=20)
+        loader = torch.utils.data.DataLoader(images, batch_size=10)
         # evaluate networ
         with torch.no_grad():
             for X in tqdm.tqdm(loader):
@@ -156,7 +177,7 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
                 preds_np = preds.cpu().detach().numpy()
                 all_preds.append(preds_np)
 
-        with open('output/quantpreds.npy', 'wb') as f:
+        with open(f'output/quantpreds_{quant_config_name}.npy', 'wb') as f:
             concated = np.concatenate(all_preds)
             print(concated.shape)
             np.save(f, concated)
