@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import torch
 import PIL
+from typing import Optional
 from torchvision import transforms as T
 from torchvision.transforms import InterpolationMode
 
@@ -16,8 +17,13 @@ def get_net():
     return net
 
 # Get image path to tune the classifier quantiser params.
-def get_images(images_dir) -> list[str]:
-    image_files = [os.path.join(images_dir, d) for d in os.listdir(images_dir)]
+def get_images(images_dir, labels_file: Optional[str] = None) -> list[str]:
+    if labels_file is not None:
+        with open(labels_file, "r") as f:
+            lines = f.readlines()
+            image_files = [os.path.join(images_dir, l.split()[0]) for l in lines]
+    else:
+        image_files = [os.path.join(images_dir, d) for d in os.listdir(images_dir)]
     # sort by filenmae only. Important for labels compatibility
     image_files.sort(key=lambda f: f.split("/")[-1])
 

@@ -14,6 +14,7 @@ from lib.quantnet import test_quant
 
 parser = argparse.ArgumentParser("quant-net")
 parser.add_argument("images_dir", help="images directory", type=str)
+parser.add_argument("--labels-file", help="optional file with labels (use for image list)", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
 parser_test = subparsers.add_parser('test-float')
@@ -85,7 +86,7 @@ def main(args):
 #    quant = args.type == "quant"
 #    print(f"Type: {args.type}")
 
-    testing_files = get_images(images_dir)
+    testing_files = get_images(images_dir, args.labels_file)
 
     # train loop
     #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
