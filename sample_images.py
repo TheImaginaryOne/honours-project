@@ -17,7 +17,7 @@ def run():
         labels_dict = {s.split()[0]: s.split()[1] for s in label_f.readlines()}
 
     # get a subset so there are N of each class label
-    N = 5
+    N = 10
     subset = []
     label_counter = Counter()
     for file_name, label in labels_dict.items():
