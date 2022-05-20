@@ -1,7 +1,7 @@
 import torch, torchvision
 import numpy as np
 from torch import nn
-from typing import List, cast
+from typing import List, cast, Callable
 from lib.math import min_pow_2
 
 def quantize_tensor(input: torch.Tensor, bit_width: int, scale: int) -> torch.Tensor:
@@ -38,8 +38,7 @@ class FakeQuantize(nn.Module):
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         min_val, max_val = -2**(self.bit_width-1), 2**(self.bit_width - 1) - 1
-        # Use "floor" function to simulate bit truncate
-        torch.floor(input / self.scale, out=input)
+        torch.round(input / self.scale, out=input)
         torch.clamp(input, min_val, max_val, out=input)
         input *= self.scale
         #print(self.scale, self.bit_width)
@@ -117,7 +116,41 @@ class QuantConfig:
         self.activation_bit_widths = activation_bit_widths
         self.weight_bit_widths = weight_bit_widths
 
-def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], quant_config: QuantConfig) -> QuantisedVgg:
+def get_bin_for_percentile(cdf: np.ndarray, percentile: float, is_top: bool):
+    bin_1 = len(cdf[cdf <= percentile]) - 1
+    #print(bin_1)
+    bin_2 = bin_1 + 1
+    # is it closer to bin 1?
+    bin = 0
+    if bin_1 < 0:
+        bin = bin_2
+    else:
+        assert cdf[bin_1] <= percentile <= cdf[bin_2]
+        if percentile - cdf[bin_1] < cdf[bin_2] - percentile:
+            bin = bin_1
+        else:
+            bin = bin_2
+
+    if not is_top:
+        bin += 1
+    return bin
+
+
+def decide_bounds_percentile(histogram: np.ndarray, tail: float):
+    cdf = np.cumsum(histogram) / np.sum(histogram)
+    #print(cdf)
+    min_bin = get_bin_for_percentile(cdf, tail, False)
+    max_bin = get_bin_for_percentile(cdf, 1. - tail, True)
+
+    return (min_bin, max_bin)
+
+def decide_bounds_min_max(histogram: np.ndarray):
+    min_bin = np.nonzero(histogram)[0][0]
+    max_bin = np.nonzero(histogram)[0][-1]
+
+    return (min_bin, max_bin)
+
+def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], quant_config: QuantConfig, bounds_alg: Callable[[np.ndarray], tuple[int, int]]) -> QuantisedVgg:
     quant_net = make_vgg11()
 
     fake_quants = [quant_net.quantize] + [cast(VggUnit, unit).quantize for unit in quant_net.features] \
@@ -127,11 +160,15 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
     i = 0
     # set fake_quant layers
     for (pow_2, histogram), fake_quant in zip(activation_histograms, fake_quants):
+
+        min_bin, max_bin = bounds_alg(histogram)
+
+        #max_bin_100 = np.nonzero(histogram)[0][-1]
         #print(pow_2)
         #print(np.nonzero(histogram)[0][-1])
-        max_val = (np.nonzero(histogram)[0][-1] - len(histogram) // 2 + 1) / len(histogram) * 2**(pow_2 + 1)
-        #print(max_val)
-        min_val = (np.nonzero(histogram)[0][0] - len(histogram) // 2) / len(histogram) * 2**(pow_2 + 1)
+        min_val = (min_bin - len(histogram) // 2) / len(histogram) * 2**(pow_2 + 1)
+        max_val = (max_bin - len(histogram) // 2 + 1) / len(histogram) * 2**(pow_2 + 1)
+        #print("--", min_val, max_val)
 
         fake_quant.bit_width = quant_config.activation_bit_widths[i]
         scale = 2**min_pow_2_scale(min_val, max_val, quant_config.activation_bit_widths[i])
@@ -153,18 +190,28 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
 
     return quant_net
 
-def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str):
+def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
     import tqdm
-    configs = {'8b': QuantConfig([8] * 13, [(8,8)] * 11), '7b': QuantConfig([7] * 13, [(7,7)] * 11)}
+    configs = {'8b': QuantConfig([8] * 13, [(8,8)] * 11), 
+            '7b': QuantConfig([7] * 13, [(7,7)] * 11),
+            '6b': QuantConfig([6] * 13, [(6,6)] * 11),
+            '4b': QuantConfig([4] * 13, [(4,4)] * 11),
+            '5b': QuantConfig([5] * 13, [(5,5)] * 11)}
     if quant_config_name not in configs:
         print("Invalid configuration, try one of", configs.keys())
         return
+
+    bounds_configs = {'minmax': decide_bounds_min_max, 'percent': lambda cdf: decide_bounds_percentile(cdf, 0.0001)}
+    if bounds_config_name not in bounds_configs:
+        print("Invalid bounds configuration, try one of", bounds_configs.keys())
+        return
+
     config = configs[quant_config_name]
     with torch.no_grad():
         #config = QuantConfig([4] * 13, [(4,4)] * 11)
         #config = QuantConfig([6] * 13, [(6,6)] * 11)
 
-        quant_net = setup_quant_net(net, activation_histograms, config)
+        quant_net = setup_quant_net(net, activation_histograms, config, bounds_configs[bounds_config_name])
         all_preds = []
 
 
@@ -177,7 +224,7 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
                 preds_np = preds.cpu().detach().numpy()
                 all_preds.append(preds_np)
 
-        with open(f'output/quantpreds_{quant_config_name}.npy', 'wb') as f:
+        with open(f'output/quantpreds_{quant_config_name}_{bounds_config_name}.npy', 'wb') as f:
             concated = np.concatenate(all_preds)
             print(concated.shape)
             np.save(f, concated)

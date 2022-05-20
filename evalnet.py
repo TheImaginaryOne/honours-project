@@ -14,13 +14,14 @@ from lib.quantnet import test_quant
 
 parser = argparse.ArgumentParser("quant-net")
 parser.add_argument("images_dir", help="images directory", type=str)
-parser.add_argument("--labels-file", help="optional file with labels (use for image list)", type=str)
+parser.add_argument("-l", "--labels-file", help="optional file with labels (use for image list)", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
+parser_test_fixed.add_argument('bounds', help='the bounds to use', type=str)
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
@@ -103,7 +104,7 @@ def main(args):
         image_gen = CustomImageData(testing_files)
         with open("output/outputhistogram.pkl", "rb") as f:
             histograms = pickle.load(f)
-        test_quant(net, histograms, image_gen, args.quant_config) # in other module
+        test_quant(net, histograms, image_gen, args.quant_config, args.bounds) # in other module
     else:
         print("No task selected.")
 
