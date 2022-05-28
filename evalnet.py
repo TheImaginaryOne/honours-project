@@ -53,7 +53,9 @@ def get_intermediate(net, image_gen):
     print(net)
 
     # Log all activations (outputs) of relevant layers
-    output_layers = [net.features[i] for i in [0, 1, 4, 7, 9, 12, 14, 17, 19]] + [net.avgpool] + [net.classifier[i] for i in [1, 4, 6]]
+    output_layers = [net.features[i] for i in [0, 1, 4, 7, 9, 12, 14, 17, 19]] \
+        + [net.classifier[i] for i in [1, 4, 6]]
+        # + [net.avgpool]  is a no-op
     hist_tracker = [HistogramTracker() for i in range(len(output_layers))]
 
     def hist_tracker_hook(hist_tracker):

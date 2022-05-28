@@ -42,7 +42,7 @@ def plot_activations():
 
     grid_plot = GridPlot(len(histograms), 5, figsize=(15, 15), sharex=True, sharey=True)
 
-    names = ["Input"] + [f"Conv Unit {i}" for i in range(8)] + ['Average Pool'] + [f"Fully Connected {i}" for i in range(3)]
+    names = ["Input"] + [f"Conv Unit {i}" for i in range(8)] + [f"Fully Connected {i}" for i in range(3)]
 
 
     for i, (range_pow_2, hist) in enumerate(histograms):

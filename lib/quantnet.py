@@ -70,7 +70,7 @@ class QuantisedVgg(nn.Module):
         num_classes = 1000
         self.quantize = FakeQuantize()
         self.features = features
-        self.avgpool = nn.Sequential(nn.AdaptiveAvgPool2d((7, 7)), FakeQuantize())
+        #self.avgpool = nn.Sequential(nn.AdaptiveAvgPool2d((7, 7)), FakeQuantize())
         self.classifier = nn.Sequential(
             nn.Linear(512 * 7 * 7, 4096),
             FakeQuantize(),
@@ -85,7 +85,7 @@ class QuantisedVgg(nn.Module):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         x = self.quantize(input)
         x = self.features(x)
-        x = self.avgpool(x)
+        #x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
@@ -151,11 +151,14 @@ def decide_bounds_min_max(histogram: np.ndarray):
     return (min_bin, max_bin)
 
 def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], quant_config: QuantConfig, bounds_alg: Callable[[np.ndarray], tuple[int, int]]) -> QuantisedVgg:
+
     quant_net = make_vgg11()
+    from torchsummary import summary
+    summary(quant_net, input_size=(3, 225, 225))
 
     fake_quants = [quant_net.quantize] + [cast(VggUnit, unit).quantize for unit in quant_net.features] \
-            + [cast(FakeQuantize, quant_net.avgpool[1])] \
             + [cast(FakeQuantize, quant_net.classifier[i]) for i in [1, 4, 7]]
+            #+ [cast(FakeQuantize, quant_net.avgpool[1])] \
 
     i = 0
     # set fake_quant layers
@@ -192,11 +195,19 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
 
 def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
     import tqdm
-    configs = {'8b': QuantConfig([8] * 13, [(8,8)] * 11), 
-            '7b': QuantConfig([7] * 13, [(7,7)] * 11),
-            '6b': QuantConfig([6] * 13, [(6,6)] * 11),
-            '4b': QuantConfig([4] * 13, [(4,4)] * 11),
-            '5b': QuantConfig([5] * 13, [(5,5)] * 11)}
+    configs = {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
+            #'8b6b_0': QuantConfig([8] * 1 + [6] * 11, [(8,8)] * 0 + [(6,6)] * 11),
+            '8b6b_1': QuantConfig([8] * 3 + [6] * 9, [(8,8)] * 2 + [(6,6)] * 9),
+            '8b6b_2': QuantConfig([8] * 5 + [6] * 7, [(8,8)] * 4 + [(6,6)] * 7),
+            '8b6b_3': QuantConfig([8] * 7 + [6] * 5, [(8,8)] * 6 + [(6,6)] * 5),
+            '8b6b_fc_1': QuantConfig([8] * 9 + [6] * 3, [(8,8)] * 8 + [(6,6)] * 3),
+            '8b5b_fc_1': QuantConfig([8] * 9 + [5] * 3, [(8,8)] * 8 + [(5,5)] * 3),
+            '8b4b_fc_1': QuantConfig([8] * 9 + [4] * 3, [(8,8)] * 8 + [(4,4)] * 3),
+            #'6b4b_1': QuantConfig([6] * 3 + [4] * 9, [(6,6)] * 2 + [(4,4)] * 9),
+            '7b': QuantConfig([7] * 12, [(7,7)] * 11),
+            '6b': QuantConfig([6] * 12, [(6,6)] * 11),
+            '4b': QuantConfig([4] * 12, [(4,4)] * 11),
+            '5b': QuantConfig([5] * 12, [(5,5)] * 11)}
     if quant_config_name not in configs:
         print("Invalid configuration, try one of", configs.keys())
         return
