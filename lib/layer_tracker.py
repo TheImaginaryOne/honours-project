@@ -13,6 +13,8 @@ class HistogramTracker:
         min_val, max_val = torch.aminmax(input)
         # assume symmetric range representation
         max_input_pow_2 = max(min_pow_2(float(min_val)), min_pow_2(float(max_val)))
+        if self.range_pow_2 is not None:
+            max_input_pow_2 = max(max_input_pow_2, self.range_pow_2)
 
         bin_count = 2 ** self.bin_count_pow_2
         hist = torch.histc(input, bins=bin_count, 
@@ -24,14 +26,14 @@ class HistogramTracker:
             self.range_pow_2 = max_input_pow_2
 
         else:
-            new_range_pow_2 = max(max_input_pow_2, self.range_pow_2)
+            new_range_pow_2 = max_input_pow_2
             # adjust scale of histogram
             if new_range_pow_2 > self.range_pow_2:
 
                 # scale down the old histogram by 2**scale_factor_pow_2.
                 # Note the first 
                 scale_factor_pow_2 = min(new_range_pow_2 - self.range_pow_2, 
-                        self.bin_count_pow_2 - 1)
+                        self.bin_count_pow_2 + 1)
 
                 # sum windows of every scale_factor elements
                 scaled_hist = torch.sum(torch.reshape(self.histogram, (-1, 2**scale_factor_pow_2)), 1)

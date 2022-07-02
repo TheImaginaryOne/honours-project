@@ -17,8 +17,11 @@ parser.add_argument("images_dir", help="images directory", type=str)
 parser.add_argument("-l", "--labels-file", help="optional file with labels (use for image list)", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
+
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
+parser_test_fixed_all = subparsers.add_parser('test-fixed-all')
+
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
 parser_test_fixed.add_argument('bounds', help='the bounds to use', type=str)
@@ -107,6 +110,25 @@ def main(args):
         with open("output/outputhistogram.pkl", "rb") as f:
             histograms = pickle.load(f)
         test_quant(net, histograms, image_gen, args.quant_config, args.bounds) # in other module
+    elif args.which == 'test-fixed-all':
+        image_gen = CustomImageData(testing_files)
+        with open("output/outputhistogram.pkl", "rb") as f:
+            histograms = pickle.load(f)
+
+        # test the neural net for all configurations
+        for quant_config in ["8b", 
+                "7b",
+                "6b",
+                "5b",
+                "4b",
+                "8b7b_fc_1",
+                "8b6b_fc_1",
+                "8b5b_fc_1",
+                "8b4b_fc_1",
+                ]:
+            for bounds in ["minmax", "percent_1_2^17", "percent_1_2^16", "percent_1_2^15", "percent_1_2^14"]:
+                print("Testing:", quant_config, bounds)
+                test_quant(net, histograms, image_gen, quant_config, bounds) # in other module
     else:
         print("No task selected.")
 
