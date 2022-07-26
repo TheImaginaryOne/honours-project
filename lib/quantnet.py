@@ -221,6 +221,12 @@ def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List
 
     return quant_net
 
+def merge_dicts(dict_list):
+    result = {}
+    for d in dict_list:
+        result.update(d)
+    return result
+
 def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
     import tqdm
     configs = {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
@@ -246,14 +252,43 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
     def dbp(tail):
         return lambda cdf: decide_bounds_percentile(cdf, tail)
 
-    bounds_configs = {'minmax': (decide_bounds_min_max, quantize_tensor_min_max), 
-            'percent_1_2^17': (dbp(1 / 131072), qtp(1 / 131072)),
-            'percent_1_2^16': (dbp(1 / 65536), qtp(1 / 65536)),
-            'percent_1_2^15': (dbp(1 / 32768), qtp(1 / 32768)),
-            'percent_1_2^14': (dbp(1 / 16384), qtp(1 / 16384)),
-            'percent_1_2^13': (dbp(1 / 8192), qtp(1 / 8192)),
-            'percent_1_2^12': (dbp(1 / 4096), qtp(1 / 4096)),
-            }
+    # The first one configures the bounds of the activations;
+    # The second one configures the bounds of the weights.
+    #bounds_configs = {'minmax': (decide_bounds_min_max, quantize_tensor_min_max), 
+    #        'p_m_99.9': (decide_bounds_min_max, qtp(1 / 1000)),
+    #        'p_m_99.99': (decide_bounds_min_max, qtp(1 / 10000)),
+    #        'p_m_99.999': (decide_bounds_min_max, qtp(1 / 100000)),
+    #        'p_99.9_m': 
+            #'percent_1_2^17': (dbp(1 / 131072), qtp(1 / 131072)),
+            #'percent_1_2^16': (dbp(1 / 65536), qtp(1 / 65536)),
+            #'percent_1_2^15': (dbp(1 / 32768), qtp(1 / 32768)),
+            #'percent_1_2^14': (dbp(1 / 16384), qtp(1 / 16384)),
+            #'percent_1_2^13': (dbp(1 / 8192), qtp(1 / 8192)),
+            #'percent_1_2^12': (dbp(1 / 4096), qtp(1 / 4096)),
+            #'percent_1_2^17_fw': (dbp(1 / 131072), quantize_tensor_min_max),
+            #'percent_1_2^16_fw': (dbp(1 / 65536), quantize_tensor_min_max),
+            #'percent_1_2^15_fw': (dbp(1 / 32768), quantize_tensor_min_max),
+            #'percent_1_2^14_fw': (dbp(1 / 16384), quantize_tensor_min_max),
+            #'percent_1_2^13_fw': (dbp(1 / 8192), quantize_tensor_min_max),
+            #'percent_1_2^12_fw': (dbp(1 / 4096), quantize_tensor_min_max),
+            #'percent_1_2^17_fa': (decide_bounds_min_max, qtp(1 / 131072)),
+            #'percent_1_2^16_fa': (decide_bounds_min_max, qtp(1 / 65536)),
+            #'percent_1_2^15_fa': (decide_bounds_min_max, qtp(1 / 32768)),
+            #'percent_1_2^14_fa': (decide_bounds_min_max, qtp(1 / 16384)),
+            #'percent_1_2^13_fa': (decide_bounds_min_max, qtp(1 / 8192)),
+            #'percent_1_2^12_fa': (decide_bounds_min_max, qtp(1 / 4096)),
+    #        }
+
+    import itertools
+    # The "bounds" algorithms for activations.
+    # Basically, this is for deciding how to set the range for quantisation.
+    # For example '3' means that the 99.99% percentile and 00.001% percentile of values are the minimum and maximum
+    # (the values outside these ranges are ignored, and can be "clipped")
+    A_ = {'m': decide_bounds_min_max, '3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000)}
+    # The "bounds" algorithms for weights
+    B_ = {'m': quantize_tensor_min_max, '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000)}
+    bounds_configs = merge_dicts([{k1 + '_' + k2: (v1, v2) for (k2, v2) in B_.items()} for (k1, v1) in A_.items()])
+
     if bounds_config_name not in bounds_configs:
         print("Invalid bounds configuration, try one of", bounds_configs.keys())
         return

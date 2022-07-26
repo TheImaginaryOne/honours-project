@@ -8,7 +8,7 @@ import pickle
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from lib.utils import process_img, get_images, CustomImageData, get_net
+from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS
 from lib.layer_tracker import HistogramTracker
 from lib.quantnet import test_quant
 
@@ -20,7 +20,8 @@ subparsers = parser.add_subparsers(dest='which') # store subcommand name in "whi
 
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
-parser_test_fixed_all = subparsers.add_parser('test-fixed-all')
+parser_subset_fixed = subparsers.add_parser('test-subset-fixed')
+parser_subset_fixed.add_argument('subset', type=str) #= subparsers.add_parser('test-subset-fixed')
 
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
@@ -86,6 +87,20 @@ def get_intermediate(net, image_gen):
     with open(r"output/outputhistogram.pkl", "wb") as output_file:
         pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
 
+def get_accuracy(label_file_name, file_name):
+    with open(label_file_name) as label_f:
+        labels = np.array([int(s.split()[1]) for s in label_f.readlines()])
+
+    with open(file_name, 'rb') as f:
+        quantpreds = np.load(f)
+
+    #print(value_counts(quantpreds))
+
+    quant_pred_labels = quantpreds.argmax(axis=1)
+
+    #print(labels, quant_pred_labels)
+    print("top 1 error:", np.mean(labels != quant_pred_labels))
+
 def main(args):
     """ Test the network! """
     images_dir = args.images_dir
@@ -110,25 +125,16 @@ def main(args):
         with open("output/outputhistogram.pkl", "rb") as f:
             histograms = pickle.load(f)
         test_quant(net, histograms, image_gen, args.quant_config, args.bounds) # in other module
-    elif args.which == 'test-fixed-all':
+    elif args.which == "test-subset-fixed":
         image_gen = CustomImageData(testing_files)
         with open("output/outputhistogram.pkl", "rb") as f:
             histograms = pickle.load(f)
 
+        import itertools
         # test the neural net for all configurations
-        for quant_config in ["8b", 
-                "7b",
-                "6b",
-                "5b",
-                "4b",
-                "8b7b_fc_1",
-                "8b6b_fc_1",
-                "8b5b_fc_1",
-                "8b4b_fc_1",
-                ]:
-            for bounds in ["minmax", "percent_1_2^17", "percent_1_2^16", "percent_1_2^15", "percent_1_2^14"]:
-                print("Testing:", quant_config, bounds)
-                test_quant(net, histograms, image_gen, quant_config, bounds) # in other module
+        for (quant_config, bounds) in CONFIG_SETS[args.subset]:
+            print("Testing:", quant_config, bounds)
+            test_quant(net, histograms, image_gen, quant_config, bounds) # in other module
     else:
         print("No task selected.")
 

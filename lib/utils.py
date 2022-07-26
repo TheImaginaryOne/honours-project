@@ -11,7 +11,22 @@ normalize = T.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 
 process_img = T.Compose([T.Resize(256, interpolation=InterpolationMode.BICUBIC), T.CenterCrop(224), T.ToTensor(), normalize])
-    
+
+import itertools
+
+NAMES = ['m', '3', '4', '5']
+ALL_BOUNDS = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES] for n1 in NAMES]))
+
+ALL_NET_CONFIGS = itertools.product(["8b", 
+                "6b",
+                "4b",
+                "8b6b_fc_1",
+                "8b4b_fc_1",
+                ], ALL_BOUNDS)
+
+# the product of tabulated sets
+CONFIG_SETS = {'all': ALL_NET_CONFIGS} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+
 def get_net():
     net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
     return net
