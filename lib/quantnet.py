@@ -307,7 +307,7 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
         trackers = get_intermediate_tracker(quant_net)
 
         loader = torch.utils.data.DataLoader(images, batch_size=10)
-        # evaluate networ
+        # evaluate network
         with torch.no_grad():
             for X in tqdm.tqdm(loader):
                 preds = quant_net(X)

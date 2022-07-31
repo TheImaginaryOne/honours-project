@@ -8,12 +8,14 @@ import pickle
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS
-from lib.layer_tracker import HistogramTracker
+from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule
+from lib.layer_tracker import HistogramTracker, HistogramInfo
 from lib.quantnet import test_quant
+from lib.fuser import fuse_conv_bn
 
 parser = argparse.ArgumentParser("quant-net")
 parser.add_argument("images_dir", help="images directory", type=str)
+parser.add_argument("net_name", help="the net to test.", type=str)
 parser.add_argument("-l", "--labels-file", help="optional file with labels (use for image list)", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
@@ -31,38 +33,30 @@ args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-def test_accuracy(net, image_gen):
-    # turn off some features for inference time (IMPORTANT)
-    net.eval()
-
+def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
     loader = DataLoader(image_gen, batch_size=20)
 
     all_preds = []
     with torch.no_grad():
         for X in tqdm.tqdm(loader):
-            preds = net(X)
+            preds = net.get_net()(X)
             # convert output to numpy
             preds_np = preds.cpu().detach().numpy()
             all_preds.append(preds_np)
 
 
-    with open('output/floatpreds.npy', 'wb') as f:
+    with open(f'output/floatpreds_{net_name}.npy', 'wb') as f:
         concated = np.concatenate(all_preds)
         print(concated.shape)
         np.save(f, concated)
 
-def get_intermediate(net, image_gen):
-    net.eval()
-
-    print(net)
-
+def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
     # Log all activations (outputs) of relevant layers
-    output_layers = [net.features[i] for i in [0, 1, 4, 7, 9, 12, 14, 17, 19]] \
-        + [net.classifier[i] for i in [1, 4, 6]]
-        # + [net.avgpool]  is a no-op
-    hist_tracker = [HistogramTracker() for i in range(len(output_layers))]
+    start_layer, output_layers = net.get_layers_to_track()
 
-    def hist_tracker_hook(hist_tracker):
+    hist_tracker = [HistogramTracker() for i in range(1 + len(output_layers))]
+
+    def hist_tracker_output_hook(hist_tracker):
         def f(module, input, output):
             hist_tracker.update(output)
         return f
@@ -71,20 +65,20 @@ def get_intermediate(net, image_gen):
             hist_tracker.update(input[0])
         return f
 
+    # collect statistics of input (ie. first layer's input)
+    start_layer.register_forward_hook(hist_tracker_input_hook(hist_tracker[0]))
+    # collect statistics of activations
     for i, layer in enumerate(output_layers):
-        if i == 0:
-            layer.register_forward_hook(hist_tracker_input_hook(hist_tracker[i]))
-        else:
-            layer.register_forward_hook(hist_tracker_hook(hist_tracker[i]))
+        layer.register_forward_hook(hist_tracker_output_hook(hist_tracker[i + 1]))
     
     loader = DataLoader(image_gen, batch_size=20)
     with torch.no_grad():
         for X in tqdm.tqdm(loader):
-            preds = net(X)
+            preds = net.get_net()(X)
 
-    histograms = [(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
+    histograms = [HistogramInfo(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
 
-    with open(r"output/outputhistogram.pkl", "wb") as output_file:
+    with open(f"output/outputhistogram_{net_name}.pkl", "wb") as output_file:
         pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
 
 def get_accuracy(label_file_name, file_name):
@@ -110,16 +104,17 @@ def main(args):
     testing_files = get_images(images_dir, args.labels_file)
 
     # train loop
-    #net = MobileNet(weights='mobilenet/mobilenet_1_0_224_tf.h5', input_shape=(224,224,3))
-    net = get_net()
-    #net = models.vgg16(pretrained=True)
+    net = get_net(args.net_name)
+
+    import torch
+    print(net)
 
     if args.which == 'test-float':
         image_gen = CustomImageData(testing_files)
-        test_accuracy(net, image_gen)
+        test_accuracy(net, args.net_name, image_gen)
     elif args.which == 'log-fixed':
         image_gen = CustomImageData(testing_files)
-        get_intermediate(net, image_gen)
+        get_intermediate(net, args.net_name, image_gen)
     elif args.which == 'test-fixed':
         image_gen = CustomImageData(testing_files)
         with open("output/outputhistogram.pkl", "rb") as f:

@@ -1,6 +1,13 @@
 import torch
 from lib.math import min_pow_2
 
+class HistogramInfo:
+    def __init__(self, range_pow_2, histogram):
+        # The histogram covers the numbers from -2^range_pow_2 to 2^range_pow_2
+        self.range_pow_2 = range_pow_2
+        # array of counts for each bin
+        self.histogram = histogram
+
 class HistogramTracker:
     def __init__(self, bin_count_pow_2=8):
         # bin range from -2**range_pow_2 to +2**range_pow_2
