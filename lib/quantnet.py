@@ -53,72 +53,6 @@ class FakeQuantize(nn.Module):
         #print(self.scale, self.bit_width)
         return input
 
-class VggUnit(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, max_pool: bool):
-        super().__init__()
-        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.quantize = FakeQuantize()
-        self.relu = nn.ReLU(inplace=True)
-        if max_pool:
-            self.max_pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        else:
-            self.max_pool = None
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv2d(x)
-        x = self.quantize(x)
-        x = self.relu(x)
-        if self.max_pool is not None:
-            x = self.max_pool(x)
-        return x
-
-
-class QuantisedVgg(nn.Module):
-    def __init__(self, features: nn.Sequential):
-        super().__init__()
-        num_classes = 1000
-        self.quantize = FakeQuantize()
-        self.features = features
-        #self.avgpool = nn.Sequential(nn.AdaptiveAvgPool2d((7, 7)), FakeQuantize())
-        self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            FakeQuantize(),
-            nn.ReLU(True),
-            nn.Linear(4096, 4096),
-            FakeQuantize(),
-            nn.ReLU(True),
-            nn.Linear(4096, num_classes),
-            FakeQuantize(),
-        )
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        x = self.quantize(input)
-        x = self.features(x)
-        #x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
-# Based on pytorch code
-def make_layers(cfg: List[tuple[int, bool]]) -> nn.Sequential:
-    layers: List[nn.Module] = []
-    in_channels = 3
-    for out_channels, max_pool in cfg:
-        layers.append(VggUnit(in_channels, out_channels, max_pool))
-        in_channels = out_channels
-    return nn.Sequential(*layers)
-
-def make_vgg11() -> QuantisedVgg:
-    layers: List[tuple[int, bool]] = [
-            (64, True), 
-            (128, True), 
-            (256, False),
-            (256, True),
-            (512, False),
-            (512, True),
-            (512, False),
-            (512, True)]
-    return QuantisedVgg(make_layers(layers))
 
 class QuantConfig:
     def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
@@ -159,6 +93,7 @@ def decide_bounds_min_max(histogram: np.ndarray):
 
     return (min_bin, max_bin)
 
+"""
 def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
     # Log all activations (outputs) of relevant layers
     output_layers = [quant_net.quantize] + [cast(VggUnit, unit).relu for unit in quant_net.features] \
@@ -175,6 +110,10 @@ def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
         layer.register_forward_hook(hist_tracker_hook(hist_tracker[i]))
     
     return hist_tracker
+"""
+
+def assert_equal(a, b):
+    assert a == b, f"{a} != {b}"
 
 def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogram], quant_config: QuantConfig, \
         bounds_alg: Callable[[np.ndarray], tuple[int, int]], \
@@ -185,7 +124,8 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
 
     start_layer_name, output_layers_names = quant_net.get_layers_to_track()
     layers_to_mutate_names = [start_layer_name] + output_layers_names
-    assert len(layers_to_mutate_names) == len(activation_histograms), "Unexpected number of histograms found"
+    assert_equal(len(layers_to_mutate_names), len(activation_histograms))#, "Unexpected number of histograms found"
+    assert_equal(len(layers_to_mutate_names), len(quant_config.activation_bit_widths))
 
     # insert fake_quant layers (these layers are the activations)
     for i, (histogram, layer_name) in enumerate(zip(activation_histograms, layers_to_mutate_names)):
@@ -229,11 +169,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         activation_histograms = pickle.load(f)
 
     import tqdm
-    configs = {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
-            #'8b6b_0': QuantConfig([8] * 1 + [6] * 11, [(8,8)] * 0 + [(6,6)] * 11),
-            '8b6b_1': QuantConfig([8] * 3 + [6] * 9, [(8,8)] * 2 + [(6,6)] * 9),
-            '8b6b_2': QuantConfig([8] * 5 + [6] * 7, [(8,8)] * 4 + [(6,6)] * 7),
-            '8b6b_3': QuantConfig([8] * 7 + [6] * 5, [(8,8)] * 6 + [(6,6)] * 5),
+    configs = {'vgg11': {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
             '8b7b_fc_1': QuantConfig([8] * 9 + [7] * 3, [(8,8)] * 8 + [(7,7)] * 3),
             '8b6b_fc_1': QuantConfig([8] * 9 + [6] * 3, [(8,8)] * 8 + [(6,6)] * 3),
             '8b5b_fc_1': QuantConfig([8] * 9 + [5] * 3, [(8,8)] * 8 + [(5,5)] * 3),
@@ -242,8 +178,11 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
             '7b': QuantConfig([7] * 12, [(7,7)] * 11),
             '6b': QuantConfig([6] * 12, [(6,6)] * 11),
             '4b': QuantConfig([4] * 12, [(4,4)] * 11),
-            '5b': QuantConfig([5] * 12, [(5,5)] * 11)}
-    if quant_config_name not in configs:
+            '5b': QuantConfig([5] * 12, [(5,5)] * 11)},
+            'resnet18': {'8b': QuantConfig([8] * 26, [(8,8)] * 21),
+            '6b': QuantConfig([6] * 26, [(6,6)] * 21),
+            '4b': QuantConfig([4] * 26, [(4,4)] * 21)}}
+    if quant_config_name not in configs[net_name]:
         print("Invalid configuration, try one of", configs.keys())
         return
 
@@ -266,7 +205,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         print("Invalid bounds configuration, try one of", bounds_configs.keys())
         return
 
-    config = configs[quant_config_name]
+    config = configs[net_name][quant_config_name]
 
     # RUN THE INFERENCE!
     with torch.no_grad():
@@ -280,7 +219,6 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
 
         # Need to track intermediate values during inference
         #trackers = get_intermediate_tracker(quant_net)
-        print(quant_net.get_net())
 
         loader = torch.utils.data.DataLoader(images, batch_size=10)
         # evaluate network

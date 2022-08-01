@@ -18,15 +18,20 @@ import itertools
 NAMES = ['m', '3', '4', '5']
 ALL_BOUNDS = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES] for n1 in NAMES]))
 
-ALL_NET_CONFIGS = itertools.product(["8b", 
+ALL_VGGNET_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
                 "8b6b_fc_1",
                 "8b4b_fc_1",
                 ], ALL_BOUNDS)
 
+ALL_RESNET_CONFIGS = itertools.product(["8b", 
+                "6b",
+                "4b",
+                ], ALL_BOUNDS)
+
 # the product of tabulated sets
-CONFIG_SETS = {'all': ALL_NET_CONFIGS} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+CONFIG_SETS = {'all-vgg11': ALL_VGGNET_CONFIGS, 'all-resnet18': ALL_RESNET_CONFIGS} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
 
 # Utility to set network to eval mode.
 def set_eval(net):
@@ -108,11 +113,13 @@ class QuantisableResnet18(QuantisableModule):
             output_layers.append(l + ".1.bn2")
             # combining from each residual connection.
             output_layers.append(l)
-        output_layers.append("avgpool")
+        # The adaptive avg pool should be a no-op if the input is exactly 224x224
+        #output_layers.append("avgpool")
         output_layers.append("fc")
         return start_layer, output_layers
     def get_layers_to_quantise(self) -> list[str]:
         output_layers = []
+        output_layers.append("conv1")
         # loop through each basic block.
         for i, l in enumerate(["layer1", "layer2", "layer3", "layer4"]):
             output_layers.append(l + ".0.conv1")
@@ -121,8 +128,6 @@ class QuantisableResnet18(QuantisableModule):
                 output_layers.append(l + ".0.downsample.0")
             output_layers.append(l + ".1.conv1")
             output_layers.append(l + ".1.conv2")
-            # combining from each residual connection.
-            output_layers.append(l)
         output_layers.append("fc")
         return output_layers
     def get_net(self) -> torch.nn.Module:
