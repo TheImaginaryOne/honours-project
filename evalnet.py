@@ -8,8 +8,8 @@ import pickle
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule
-from lib.layer_tracker import HistogramTracker, HistogramInfo
+from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule, get_module
+from lib.layer_tracker import HistogramTracker, Histogram
 from lib.quantnet import test_quant
 from lib.fuser import fuse_conv_bn
 
@@ -52,7 +52,10 @@ def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
 
 def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
     # Log all activations (outputs) of relevant layers
-    start_layer, output_layers = net.get_layers_to_track()
+    # Note: these return names
+    start_layer_name, output_layers_names = net.get_layers_to_track()
+    start_layer = get_module(net.get_net(), start_layer_name)
+    output_layers = [get_module(net.get_net(), layer_name) for layer_name in output_layers_names]
 
     hist_tracker = [HistogramTracker() for i in range(1 + len(output_layers))]
 
@@ -76,7 +79,7 @@ def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
         for X in tqdm.tqdm(loader):
             preds = net.get_net()(X)
 
-    histograms = [HistogramInfo(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
+    histograms = [Histogram(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
 
     with open(f"output/outputhistogram_{net_name}.pkl", "wb") as output_file:
         pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
@@ -117,19 +120,14 @@ def main(args):
         get_intermediate(net, args.net_name, image_gen)
     elif args.which == 'test-fixed':
         image_gen = CustomImageData(testing_files)
-        with open("output/outputhistogram.pkl", "rb") as f:
-            histograms = pickle.load(f)
-        test_quant(net, histograms, image_gen, args.quant_config, args.bounds) # in other module
+        test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds) # in other module
     elif args.which == "test-subset-fixed":
         image_gen = CustomImageData(testing_files)
-        with open("output/outputhistogram.pkl", "rb") as f:
-            histograms = pickle.load(f)
 
-        import itertools
         # test the neural net for all configurations
         for (quant_config, bounds) in CONFIG_SETS[args.subset]:
             print("Testing:", quant_config, bounds)
-            test_quant(net, histograms, image_gen, quant_config, bounds) # in other module
+            test_quant(net, args.net_name, image_gen, quant_config, bounds) # in other module
     else:
         print("No task selected.")
 

@@ -1,5 +1,6 @@
 import os
 import argparse
+from abc import ABC, abstractmethod
 import numpy as np
 import torch
 import PIL
@@ -43,24 +44,49 @@ def fuse_resnet(net):
                         torch.quantization.fuse_modules(sub_block, [["0", "1"]], inplace=True)
     return fused_model
 
-class QuantisableModule:
-    def get_layers_to_track(self):
+class QuantisableModule(ABC):
+    @abstractmethod
+    def get_layers_to_track(self) -> tuple[str, list[str]]:
         pass
+
+    @abstractmethod
+    def get_layers_to_quantise(self) -> list[str]:
+        pass
+
+    @abstractmethod
     def get_net(self) -> torch.nn.Module:
         pass
 
+# Access a nested object by dot notation (for example, relu.0)
+# Based on code in pytorch/pytorch
+def get_module(model, submodule_key):
+    tokens = submodule_key.split('.')
+    cur_mod = model
+    for s in tokens:
+        cur_mod = getattr(cur_mod, s)
+    return cur_mod
+
+def set_module(model, submodule_key, module):
+    tokens = submodule_key.split('.')
+    sub_tokens = tokens[:-1]
+    cur_mod = model
+    for s in sub_tokens:
+        cur_mod = getattr(cur_mod, s)
+
+    setattr(cur_mod, tokens[-1], module)
 
 class QuantisableVgg11(QuantisableModule):
     def __init__(self):
         self.net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
         self.net.eval()
-    def get_layers_to_track(self):
-        net = self.net
-        start_layer = net.features[0]
+    def get_layers_to_track(self) -> tuple[str, list[str]]:
+        start_layer = "features.0"
         # Track the activations of the ReLU layers
-        output_layers = [net.features[i] for i in [1, 4, 7, 9, 12, 14, 17, 19]] \
-            + [net.classifier[i] for i in [1, 4, 6]]
+        output_layers = [f"features.{i}" for i in [1, 4, 7, 9, 12, 14, 17, 19]] \
+            + [f"classifier.{i}" for i in [1, 4, 6]]
         return start_layer, output_layers
+    def get_layers_to_quantise(self) -> list[str]:
+        return [f"features.{i}" for i in [0, 3, 6, 8, 11, 13, 16, 18]] + [f"classifier.{i}" for i in [0, 3, 6]]
     def get_net(self) -> torch.nn.Module:
         return self.net
 
@@ -69,20 +95,36 @@ class QuantisableResnet18(QuantisableModule):
         self.net = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
         self.net.eval()
         self.net = fuse_resnet(self.net)
-    def get_layers_to_track(self):
-        net = self.net
-        start_layer = net.conv1
-        output_layers = [net.relu]
-        for i, l in enumerate([net.layer1, net.layer2, net.layer3, net.layer4]):
-            output_layers.append(l[0].relu)
-            output_layers.append(l[0].bn2)
+    def get_layers_to_track(self) -> tuple[str, list[str]]:
+        start_layer = "conv1"
+        output_layers = ["relu"]
+        # loop through each basic block.
+        for i, l in enumerate(["layer1", "layer2", "layer3", "layer4"]):
+            output_layers.append(l + ".0.relu")
+            output_layers.append(l + ".0.bn2")
             if i > 0:
-                output_layers.append(l[0].downsample[1])
-            output_layers.append(l[1].relu)
-            output_layers.append(l[1].bn2)
-        output_layers.append(net.avgpool)
-        output_layers.append(net.fc)
+                output_layers.append(l + ".0.downsample.1")
+            output_layers.append(l + ".1.relu")
+            output_layers.append(l + ".1.bn2")
+            # combining from each residual connection.
+            output_layers.append(l)
+        output_layers.append("avgpool")
+        output_layers.append("fc")
         return start_layer, output_layers
+    def get_layers_to_quantise(self) -> list[str]:
+        output_layers = []
+        # loop through each basic block.
+        for i, l in enumerate(["layer1", "layer2", "layer3", "layer4"]):
+            output_layers.append(l + ".0.conv1")
+            output_layers.append(l + ".0.conv2")
+            if i > 0:
+                output_layers.append(l + ".0.downsample.0")
+            output_layers.append(l + ".1.conv1")
+            output_layers.append(l + ".1.conv2")
+            # combining from each residual connection.
+            output_layers.append(l)
+        output_layers.append("fc")
+        return output_layers
     def get_net(self) -> torch.nn.Module:
         return self.net
 

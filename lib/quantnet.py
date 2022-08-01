@@ -1,10 +1,12 @@
 import torch, torchvision
 import numpy as np
+import pickle
 from torch import nn
 from typing import List, cast, Callable
 from lib.math import min_pow_2
 
-from lib.layer_tracker import HistogramTracker
+from lib.layer_tracker import HistogramTracker, Histogram
+from lib.utils import QuantisableModule, get_module, set_module
 
 def quantize_tensor(input: torch.Tensor, bit_width: int, scale: int) -> torch.Tensor:
     """ Fake quantize utility """
@@ -174,50 +176,45 @@ def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
     
     return hist_tracker
 
-def setup_quant_net(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], quant_config: QuantConfig, \
+def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogram], quant_config: QuantConfig, \
         bounds_alg: Callable[[np.ndarray], tuple[int, int]], \
-        weights_bounds_alg: Callable[[np.ndarray], int] \
-        ) -> QuantisedVgg:
+        weights_bounds_alg: Callable[[np.ndarray, int], int] \
+        ) -> QuantisableModule:
+    import copy
+    quant_net = copy.deepcopy(net)
 
-    quant_net = make_vgg11()
-    from torchsummary import summary
-    #summary(quant_net, input_size=(3, 225, 225))
+    start_layer_name, output_layers_names = quant_net.get_layers_to_track()
+    layers_to_mutate_names = [start_layer_name] + output_layers_names
+    assert len(layers_to_mutate_names) == len(activation_histograms), "Unexpected number of histograms found"
 
-    fake_quants = [quant_net.quantize] + [cast(VggUnit, unit).quantize for unit in quant_net.features] \
-            + [cast(FakeQuantize, quant_net.classifier[i]) for i in [1, 4, 7]]
-            #+ [cast(FakeQuantize, quant_net.avgpool[1])] \
+    # insert fake_quant layers (these layers are the activations)
+    for i, (histogram, layer_name) in enumerate(zip(activation_histograms, layers_to_mutate_names)):
+        min_bin, max_bin = bounds_alg(histogram.values)
 
-    i = 0
-    # set fake_quant layers
-    for (pow_2, histogram), fake_quant in zip(activation_histograms, fake_quants):
+        min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
+        max_val = (max_bin - len(histogram.values) // 2 + 1) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
 
-        min_bin, max_bin = bounds_alg(histogram)
-
-        #max_bin_100 = np.nonzero(histogram)[0][-1]
-        #print(pow_2)
-        #print(np.nonzero(histogram)[0][-1])
-        min_val = (min_bin - len(histogram) // 2) / len(histogram) * 2**(pow_2 + 1)
-        max_val = (max_bin - len(histogram) // 2 + 1) / len(histogram) * 2**(pow_2 + 1)
-        #print("--", min_val, max_val)
-
+        fake_quant = FakeQuantize()
         fake_quant.bit_width = quant_config.activation_bit_widths[i]
         scale = 2**min_pow_2_scale(min_val, max_val, quant_config.activation_bit_widths[i])
         fake_quant.scale = scale
-        #print("-", pow_2)
-        i += 1
 
-    output_feature_layers = [net.features[i] for i in [0, 3, 6, 8, 11, 13, 16, 18]]
-    classifier_layers = [net.classifier[i] for i in [0, 3, 6]]
+        layer = get_module(net.get_net(), layer_name)
+        # insert the quant layer
+        if i > 0:
+            set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(layer, fake_quant))
+        else:
+            # the start layer
+            set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(fake_quant, layer))
 
     w = weights_bounds_alg
-    # copy weights
-    for i, layer in enumerate(output_feature_layers):
-        quant_net.features[i].conv2d.weight = nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[i][0]))
-        quant_net.features[i].conv2d.bias = nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[i][1]))
-    for i, layer, j in zip([0, 3, 6], classifier_layers, range(len(output_feature_layers), len(output_feature_layers) + 3)):
-        # just an offset
-        quant_net.classifier[i].weight = nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[j][0]))
-        quant_net.classifier[i].bias = nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[j][1]))
+
+    # quantise the weights of the layers.
+    for i, layer_name in enumerate(quant_net.get_layers_to_quantise()):
+        layer = get_module(net.get_net(), layer_name)
+
+        layer.weight = nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[i][0]))
+        layer.bias = nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[i][1]))
 
     return quant_net
 
@@ -227,7 +224,10 @@ def merge_dicts(dict_list):
         result.update(d)
     return result
 
-def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tuple[int, np.ndarray]], images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
+def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
+    with open(f"output/outputhistogram_{net_name}.pkl", "rb") as f:
+        activation_histograms = pickle.load(f)
+
     import tqdm
     configs = {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
             #'8b6b_0': QuantConfig([8] * 1 + [6] * 11, [(8,8)] * 0 + [(6,6)] * 11),
@@ -252,33 +252,6 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
     def dbp(tail):
         return lambda cdf: decide_bounds_percentile(cdf, tail)
 
-    # The first one configures the bounds of the activations;
-    # The second one configures the bounds of the weights.
-    #bounds_configs = {'minmax': (decide_bounds_min_max, quantize_tensor_min_max), 
-    #        'p_m_99.9': (decide_bounds_min_max, qtp(1 / 1000)),
-    #        'p_m_99.99': (decide_bounds_min_max, qtp(1 / 10000)),
-    #        'p_m_99.999': (decide_bounds_min_max, qtp(1 / 100000)),
-    #        'p_99.9_m': 
-            #'percent_1_2^17': (dbp(1 / 131072), qtp(1 / 131072)),
-            #'percent_1_2^16': (dbp(1 / 65536), qtp(1 / 65536)),
-            #'percent_1_2^15': (dbp(1 / 32768), qtp(1 / 32768)),
-            #'percent_1_2^14': (dbp(1 / 16384), qtp(1 / 16384)),
-            #'percent_1_2^13': (dbp(1 / 8192), qtp(1 / 8192)),
-            #'percent_1_2^12': (dbp(1 / 4096), qtp(1 / 4096)),
-            #'percent_1_2^17_fw': (dbp(1 / 131072), quantize_tensor_min_max),
-            #'percent_1_2^16_fw': (dbp(1 / 65536), quantize_tensor_min_max),
-            #'percent_1_2^15_fw': (dbp(1 / 32768), quantize_tensor_min_max),
-            #'percent_1_2^14_fw': (dbp(1 / 16384), quantize_tensor_min_max),
-            #'percent_1_2^13_fw': (dbp(1 / 8192), quantize_tensor_min_max),
-            #'percent_1_2^12_fw': (dbp(1 / 4096), quantize_tensor_min_max),
-            #'percent_1_2^17_fa': (decide_bounds_min_max, qtp(1 / 131072)),
-            #'percent_1_2^16_fa': (decide_bounds_min_max, qtp(1 / 65536)),
-            #'percent_1_2^15_fa': (decide_bounds_min_max, qtp(1 / 32768)),
-            #'percent_1_2^14_fa': (decide_bounds_min_max, qtp(1 / 16384)),
-            #'percent_1_2^13_fa': (decide_bounds_min_max, qtp(1 / 8192)),
-            #'percent_1_2^12_fa': (decide_bounds_min_max, qtp(1 / 4096)),
-    #        }
-
     import itertools
     # The "bounds" algorithms for activations.
     # Basically, this is for deciding how to set the range for quantisation.
@@ -294,6 +267,8 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
         return
 
     config = configs[quant_config_name]
+
+    # RUN THE INFERENCE!
     with torch.no_grad():
         #config = QuantConfig([4] * 13, [(4,4)] * 11)
         #config = QuantConfig([6] * 13, [(6,6)] * 11)
@@ -304,25 +279,25 @@ def test_quant(net: torchvision.models.vgg.VGG, activation_histograms: List[tupl
         all_preds = []
 
         # Need to track intermediate values during inference
-        trackers = get_intermediate_tracker(quant_net)
+        #trackers = get_intermediate_tracker(quant_net)
+        print(quant_net.get_net())
 
         loader = torch.utils.data.DataLoader(images, batch_size=10)
         # evaluate network
         with torch.no_grad():
             for X in tqdm.tqdm(loader):
-                preds = quant_net(X)
+                preds = quant_net.get_net()(X)
                 # convert output to numpy
                 preds_np = preds.cpu().detach().numpy()
                 all_preds.append(preds_np)
 
 
-        with open(f'output/quantpreds_{quant_config_name}_{bounds_config_name}.npy', 'wb') as f:
+        with open(f'output/quantpreds_{net_name}_{quant_config_name}_{bounds_config_name}.npy', 'wb') as f:
             concated = np.concatenate(all_preds)
             #print(concated.shape)
             np.save(f, concated)
 
-        histograms = [(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in trackers]
+        #histograms = [(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in trackers]
 
-        import pickle
-        with open(f"output/outputhistograms_{quant_config_name}_{bounds_config_name}.pkl", "wb") as output_file:
-            pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
+        #with open(f"output/outputhistograms_{net_name}_{quant_config_name}_{bounds_config_name}.pkl", "wb") as output_file:
+        #    pickle.dump(histograms, output_file, protocol=pickle.HIGHEST_PROTOCOL)
