@@ -125,7 +125,7 @@ def main(args):
         image_gen = CustomImageData(testing_files)
 
         # test the neural net for all configurations
-        for (quant_config, bounds) in CONFIG_SETS[args.subset]:
+        for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
             print("Testing:", quant_config, bounds)
             test_quant(net, args.net_name, image_gen, quant_config, bounds) # in other module
     else:

@@ -6,9 +6,11 @@ import torch
 
 import argparse
 
-from lib.utils import get_net
+from lib.utils import get_net, get_module
 
 parser = argparse.ArgumentParser("analyse-output-hist")
+parser.add_argument('net_name')
+
 subparsers = parser.add_subparsers(dest='choice')
 
 activations_parser = subparsers.add_parser('activations')
@@ -25,14 +27,14 @@ class GridPlot:
         self.width = width
         self.count = count
         self.height = (count - 1) // width + 1
-        self.fig, self.ax = plt.subplots(self.width, self.height, **kwargs)
+        self.fig, self.ax = plt.subplots(self.height, self.width, **kwargs)
         # clear some axes
         for i in range(count, self.width * self.height):
-            x, y = i % width, i // width
+            y, x = i % width, i // width
             self.ax[(x, y)].axis('off')
 
     def get_ax(self, i):
-        x, y = i % self.width, i // self.width
+        y, x = i % self.width, i // self.width
         return self.ax[(x, y)]
 
     def get_fig(self):
@@ -62,46 +64,29 @@ def plot_activations(filename):
 
     grid_plot.get_fig().savefig(f"output/{filename}.png")
 
-def plot_weights():
+def plot_weights(net_name):
     """Plot network weights"""
-    net = get_net()
+    net = get_net(net_name)
+    net.get_net().eval()
+    layer_names = net.get_layers_to_quantise()
+    grid_plot = GridPlot(len(layer_names), 4, figsize=(15, 15), sharex=True, sharey=True)
 
-    grid_plot = GridPlot(11, 4, figsize=(15, 15), sharex=True, sharey=True)
+    for i, layer_name in enumerate(layer_names):
+        layer = get_module(net.get_net(), layer_name)
+        ax = grid_plot.get_ax(i)
+        ax.set_title(f'Layer {i}')
+        ax.hist(layer.bias.detach().numpy().flatten(), bins=32, alpha=0.5, label='bias')
+        ax.hist(layer.weight.detach().numpy().flatten(), bins=32, alpha=0.5, label='weight')
+        ax.set_yscale('symlog')
+        ax.legend()
 
-    cnt = 0
-    i = 0
-    j = 0
-    with torch.no_grad():
-        for layer in net.features:
-            if isinstance(layer, torch.nn.Conv2d):
-                ax = grid_plot.get_ax(cnt)
-                ax.set_title(f'Conv {i}')
-                ax.hist(layer.bias.numpy().flatten(), bins=32, alpha=0.5, label='bias')
-                ax.hist(layer.weight.numpy().flatten(), bins=32, alpha=0.5, label='weight')
-                ax.set_yscale('symlog')
-                ax.legend()
-                cnt += 1
-
-                i += 1
-
-        for layer in net.classifier:
-            if isinstance(layer, torch.nn.Linear):
-                ax = grid_plot.get_ax(cnt)
-                ax.set_title(f'Fully Connected {j}')
-                ax.hist(layer.bias.numpy().flatten(), bins=32, alpha=0.5, label='bias')
-                ax.hist(layer.weight.numpy().flatten(), bins=32, alpha=0.5, label='weight')
-                ax.set_yscale('symlog')
-                ax.legend()
-                cnt += 1
-                j += 1
-
-    grid_plot.get_fig().savefig("output/weightshistogram.png")
+    grid_plot.get_fig().savefig(f"output/{net_name}_weightshistogram.png")
 
 def main():
     if args.choice == 'activations':
-        plot_activations(args.filename_prefix)
+        plot_activations(args.filename_prefix), # args.net_name
     else:
-        plot_weights()
+        plot_weights(args.net_name)
 
 
 main()

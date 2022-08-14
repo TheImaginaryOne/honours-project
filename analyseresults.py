@@ -13,6 +13,7 @@ subp = parser.add_subparsers(help="analyse all or one of the results", dest="com
 
 set_parser = subp.add_parser("set")
 set_parser.add_argument("dir", help="predictions directory", type=str)
+set_parser.add_argument("net_name", help="name of chosen neural net", type=str)
 set_parser.add_argument("subset", help="subset of configs to show", type=str)
 
 one_parser = subp.add_parser("one")
@@ -54,11 +55,11 @@ def print_set():
     data = []
 
     # For each configuration, we get the results
-    for (quant_config, bounds) in CONFIG_SETS[args.subset]:
+    for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
         import os
         # load prediction weights
         # Note that the outputs are a numpy table
-        fname = os.path.join(args.dir, f"quantpreds_{quant_config}_{bounds}.npy")
+        fname = os.path.join(args.dir, f"quantpreds_{args.net_name}_{quant_config}_{bounds}.npy")
 
         with open(fname, 'rb') as f:
             quantpreds = np.load(f)

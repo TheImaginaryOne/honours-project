@@ -17,21 +17,23 @@ import itertools
 
 NAMES = ['m', '3', '4', '5']
 ALL_BOUNDS = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES] for n1 in NAMES]))
+NAMES_RESNET = ['3', '4', '5', 'm']
+ALL_BOUNDS_RESNET = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES_RESNET] for n1 in NAMES_RESNET]))
 
 ALL_VGGNET_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
-                "8b6b_fc_1",
-                "8b4b_fc_1",
+                #"8b6b_fc_1",
+                #"8b4b_fc_1",
                 ], ALL_BOUNDS)
 
 ALL_RESNET_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
-                ], ALL_BOUNDS)
+                ], ALL_BOUNDS_RESNET)
 
 # the product of tabulated sets
-CONFIG_SETS = {'all-vgg11': ALL_VGGNET_CONFIGS, 'all-resnet18': ALL_RESNET_CONFIGS} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, 'resnet18': {'all': ALL_RESNET_CONFIGS}} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
 
 # Utility to set network to eval mode.
 def set_eval(net):
@@ -78,6 +80,9 @@ def set_module(model, submodule_key, module):
     for s in sub_tokens:
         cur_mod = getattr(cur_mod, s)
 
+    #print("mod:", cur_mod)
+    if not hasattr(cur_mod, tokens[-1]):
+        raise RuntimeError(f"attr does not exist: {cur_mod}, {tokens[-1]}")
     setattr(cur_mod, tokens[-1], module)
 
 class QuantisableVgg11(QuantisableModule):
@@ -87,8 +92,10 @@ class QuantisableVgg11(QuantisableModule):
     def get_layers_to_track(self) -> tuple[str, list[str]]:
         start_layer = "features.0"
         # Track the activations of the ReLU layers
+        #[f"features.{i}" for i in [0, 3, 6, 8, 11, 13, 16, 18]] \
+        #  + [f"classifier.{i}" for i in [0, 3, 6]]
         output_layers = [f"features.{i}" for i in [1, 4, 7, 9, 12, 14, 17, 19]] \
-            + [f"classifier.{i}" for i in [1, 4, 6]]
+           + [f"classifier.{i}" for i in [1, 4, 6]]
         return start_layer, output_layers
     def get_layers_to_quantise(self) -> list[str]:
         return [f"features.{i}" for i in [0, 3, 6, 8, 11, 13, 16, 18]] + [f"classifier.{i}" for i in [0, 3, 6]]

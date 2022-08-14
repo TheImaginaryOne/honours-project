@@ -29,8 +29,10 @@ def quantize_tensor_percentile(input: torch.Tensor, bit_width: int, lq: float, r
     #print(input.size())
     p = np.quantile(input.numpy(), [lq, rq])
     min_val, max_val = p[0], p[1]
+    # print("quantile", min_val, max_val)
     # Minimum power of 2 required to represent all tensor values
     scale = 2**min_pow_2_scale(min_val.item(), max_val.item(), bit_width)
+    #print("quant tensor:", scale)
     tensor = quantize_tensor(input, bit_width, scale)
 
     # Sanity check that quantization works properly
@@ -93,7 +95,6 @@ def decide_bounds_min_max(histogram: np.ndarray):
 
     return (min_bin, max_bin)
 
-"""
 def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
     # Log all activations (outputs) of relevant layers
     output_layers = [quant_net.quantize] + [cast(VggUnit, unit).relu for unit in quant_net.features] \
@@ -110,7 +111,6 @@ def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
         layer.register_forward_hook(hist_tracker_hook(hist_tracker[i]))
     
     return hist_tracker
-"""
 
 def assert_equal(a, b):
     assert a == b, f"{a} != {b}"
@@ -127,6 +127,15 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
     assert_equal(len(layers_to_mutate_names), len(activation_histograms))#, "Unexpected number of histograms found"
     assert_equal(len(layers_to_mutate_names), len(quant_config.activation_bit_widths))
 
+    w = weights_bounds_alg
+
+    # quantise the weights of the layers.
+    for i, layer_name in enumerate(quant_net.get_layers_to_quantise()):
+        layer = get_module(quant_net.get_net(), layer_name)
+        set_module(quant_net.get_net(), layer_name + ".weight", nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[i][0])))
+        set_module(quant_net.get_net(), layer_name + ".bias", nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[i][1])))
+
+    # MUST EXEC THIS BELOW CODE AFTER THE ABOVE LOOP
     # insert fake_quant layers (these layers are the activations)
     for i, (histogram, layer_name) in enumerate(zip(activation_histograms, layers_to_mutate_names)):
         min_bin, max_bin = bounds_alg(histogram.values)
@@ -139,7 +148,9 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
         scale = 2**min_pow_2_scale(min_val, max_val, quant_config.activation_bit_widths[i])
         fake_quant.scale = scale
 
-        layer = get_module(net.get_net(), layer_name)
+        #print("quant acts", scale)
+
+        layer = get_module(quant_net.get_net(), layer_name)
         # insert the quant layer
         if i > 0:
             set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(layer, fake_quant))
@@ -147,14 +158,6 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
             # the start layer
             set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(fake_quant, layer))
 
-    w = weights_bounds_alg
-
-    # quantise the weights of the layers.
-    for i, layer_name in enumerate(quant_net.get_layers_to_quantise()):
-        layer = get_module(net.get_net(), layer_name)
-
-        layer.weight = nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[i][0]))
-        layer.bias = nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[i][1]))
 
     return quant_net
 
@@ -179,7 +182,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
             '6b': QuantConfig([6] * 12, [(6,6)] * 11),
             '4b': QuantConfig([4] * 12, [(4,4)] * 11),
             '5b': QuantConfig([5] * 12, [(5,5)] * 11)},
-            'resnet18': {'8b': QuantConfig([8] * 26, [(8,8)] * 21),
+            'resnet18': {'8b': QuantConfig([16] + [8] * 25, [(8,8)] * 21),
             '6b': QuantConfig([6] * 26, [(6,6)] * 21),
             '4b': QuantConfig([4] * 26, [(4,4)] * 21)}}
     if quant_config_name not in configs[net_name]:
@@ -196,9 +199,9 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
     # Basically, this is for deciding how to set the range for quantisation.
     # For example '3' means that the 99.99% percentile and 00.001% percentile of values are the minimum and maximum
     # (the values outside these ranges are ignored, and can be "clipped")
-    A_ = {'m': decide_bounds_min_max, '3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000)}
+    A_ = {'m': decide_bounds_min_max, '3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000), '6': dbp(1 / 1000000)}
     # The "bounds" algorithms for weights
-    B_ = {'m': quantize_tensor_min_max, '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000)}
+    B_ = {'m': quantize_tensor_min_max, '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000), '6': qtp(1 / 1000000)}
     bounds_configs = merge_dicts([{k1 + '_' + k2: (v1, v2) for (k2, v2) in B_.items()} for (k1, v1) in A_.items()])
 
     if bounds_config_name not in bounds_configs:
@@ -215,6 +218,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         bound_algs = bounds_configs[bounds_config_name]
 
         quant_net = setup_quant_net(net, activation_histograms, config, bound_algs[0], bound_algs[1])
+        #print(quant_net.get_net())
         all_preds = []
 
         # Need to track intermediate values during inference
