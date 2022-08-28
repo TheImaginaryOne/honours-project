@@ -22,8 +22,10 @@ subparsers = parser.add_subparsers(dest='which') # store subcommand name in "whi
 
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
+
 parser_subset_fixed = subparsers.add_parser('test-subset-fixed')
 parser_subset_fixed.add_argument('subset', type=str) #= subparsers.add_parser('test-subset-fixed')
+parser_subset_fixed.add_argument('-i', '--ignore-existing', action=argparse.BooleanOptionalAction) #= subparsers.add_parser('test-subset-fixed')
 
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
@@ -120,14 +122,14 @@ def main(args):
         get_intermediate(net, args.net_name, image_gen)
     elif args.which == 'test-fixed':
         image_gen = CustomImageData(testing_files)
-        test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds) # in other module
+        test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds, False) # in other module
     elif args.which == "test-subset-fixed":
         image_gen = CustomImageData(testing_files)
 
         # test the neural net for all configurations
         for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
             print("Testing:", quant_config, bounds)
-            test_quant(net, args.net_name, image_gen, quant_config, bounds) # in other module
+            test_quant(net, args.net_name, image_gen, quant_config, bounds, args.ignore_existing) # in other module
     else:
         print("No task selected.")
 

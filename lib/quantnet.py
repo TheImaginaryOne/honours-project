@@ -1,6 +1,7 @@
 import torch, torchvision
 import numpy as np
 import pickle
+import os
 from torch import nn
 from typing import List, cast, Callable
 from lib.math import min_pow_2
@@ -167,16 +168,22 @@ def merge_dicts(dict_list):
         result.update(d)
     return result
 
-def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str):
+def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str, ignore_existing_file: bool):
+    output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}_{bounds_config_name}.npy'
+    # Skip if the result file exists
+    if ignore_existing_file and os.path.exists(output_file_name):
+        print(f"{output_file_name} exists; skipping")
+        return
+
     with open(f"output/outputhistogram_{net_name}.pkl", "rb") as f:
         activation_histograms = pickle.load(f)
 
     import tqdm
     configs = {'vgg11': {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
-            '8b7b_fc_1': QuantConfig([8] * 9 + [7] * 3, [(8,8)] * 8 + [(7,7)] * 3),
-            '8b6b_fc_1': QuantConfig([8] * 9 + [6] * 3, [(8,8)] * 8 + [(6,6)] * 3),
-            '8b5b_fc_1': QuantConfig([8] * 9 + [5] * 3, [(8,8)] * 8 + [(5,5)] * 3),
-            '8b4b_fc_1': QuantConfig([8] * 9 + [4] * 3, [(8,8)] * 8 + [(4,4)] * 3),
+            '8b7b_fc': QuantConfig([8] * 9 + [7] * 3, [(8,8)] * 8 + [(7,7)] * 3),
+            '8b6b_fc': QuantConfig([8] * 9 + [6] * 3, [(8,8)] * 8 + [(6,6)] * 3),
+            '8b5b_fc': QuantConfig([8] * 9 + [5] * 3, [(8,8)] * 8 + [(5,5)] * 3),
+            '8b4b_fc': QuantConfig([8] * 9 + [4] * 3, [(8,8)] * 8 + [(4,4)] * 3),
             #'6b4b_1': QuantConfig([6] * 3 + [4] * 9, [(6,6)] * 2 + [(4,4)] * 9),
             '7b': QuantConfig([7] * 12, [(7,7)] * 11),
             '6b': QuantConfig([6] * 12, [(6,6)] * 11),
@@ -234,7 +241,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
                 all_preds.append(preds_np)
 
 
-        with open(f'output/quantpreds_{net_name}_{quant_config_name}_{bounds_config_name}.npy', 'wb') as f:
+        with open(output_file_name, 'wb') as f:
             concated = np.concatenate(all_preds)
             #print(concated.shape)
             np.save(f, concated)

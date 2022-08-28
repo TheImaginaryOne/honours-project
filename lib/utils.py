@@ -23,8 +23,8 @@ ALL_BOUNDS_RESNET = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES_RESNET
 ALL_VGGNET_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
-                #"8b6b_fc_1",
-                #"8b4b_fc_1",
+                "8b6b_fc",
+                "8b4b_fc",
                 ], ALL_BOUNDS)
 
 ALL_RESNET_CONFIGS = itertools.product(["8b", 
