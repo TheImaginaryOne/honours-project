@@ -33,7 +33,7 @@ ALL_RESNET_CONFIGS = itertools.product(["8b",
                 ], ALL_BOUNDS_RESNET)
 
 # the product of tabulated sets
-CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, 'resnet18': {'all': ALL_RESNET_CONFIGS}} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, 'resnet18': {'all': ALL_RESNET_CONFIGS}, 'resnet34': {'all': ALL_RESNET_CONFIGS}} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
 
 # Utility to set network to eval mode.
 def set_eval(net):
@@ -102,22 +102,25 @@ class QuantisableVgg11(QuantisableModule):
     def get_net(self) -> torch.nn.Module:
         return self.net
 
-class QuantisableResnet18(QuantisableModule):
-    def __init__(self):
-        self.net = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+class QuantisableResnet(QuantisableModule):
+    layer_names = ["layer1", "layer2", "layer3", "layer4"]
+
+    def __init__(self, net: torch.nn.Module, layer_sizes: list[int]):
+        self.net = net
         self.net.eval()
         self.net = fuse_resnet(self.net)
+        self.layer_sizes = layer_sizes
     def get_layers_to_track(self) -> tuple[str, list[str]]:
         start_layer = "conv1"
         output_layers = ["relu"]
         # loop through each basic block.
-        for i, l in enumerate(["layer1", "layer2", "layer3", "layer4"]):
-            output_layers.append(l + ".0.relu")
-            output_layers.append(l + ".0.bn2")
-            if i > 0:
-                output_layers.append(l + ".0.downsample.1")
-            output_layers.append(l + ".1.relu")
-            output_layers.append(l + ".1.bn2")
+        for i, l in enumerate(QuantisableResnet.layer_names):
+            unit_count = self.layer_sizes[i]
+            for j in range(unit_count):
+                output_layers.append(l + f".{j}.relu")
+                output_layers.append(l + f".{j}.bn2")
+                if i > 0 and j == 0:
+                    output_layers.append(l + f".{j}.downsample.1")
             # combining from each residual connection.
             output_layers.append(l)
         # The adaptive avg pool should be a no-op if the input is exactly 224x224
@@ -128,22 +131,31 @@ class QuantisableResnet18(QuantisableModule):
         output_layers = []
         output_layers.append("conv1")
         # loop through each basic block.
-        for i, l in enumerate(["layer1", "layer2", "layer3", "layer4"]):
-            output_layers.append(l + ".0.conv1")
-            output_layers.append(l + ".0.conv2")
-            if i > 0:
-                output_layers.append(l + ".0.downsample.0")
-            output_layers.append(l + ".1.conv1")
-            output_layers.append(l + ".1.conv2")
+        for i, l in enumerate(QuantisableResnet.layer_names):
+            unit_count = self.layer_sizes[i]
+            for j in range(unit_count):
+                output_layers.append(l + f".{j}.conv1")
+                output_layers.append(l + f".{j}.conv2")
+                if i > 0 and j == 0:
+                    output_layers.append(l + f".{j}.downsample.0")
         output_layers.append("fc")
         return output_layers
     def get_net(self) -> torch.nn.Module:
         return self.net
 
+def get_resnet(name):
+    if name == "resnet18":
+        return QuantisableResnet(torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True), [2,2,2,2])
+    elif name == "resnet34":
+        return QuantisableResnet(torch.hub.load('pytorch/vision:v0.10.0', 'resnet34', pretrained=True), [3,4,6,3])
+
 NETS = {'vgg11': QuantisableVgg11(),
-        'resnet18': QuantisableResnet18()}
+        'resnet18': get_resnet("resnet18"),
+        'resnet34': get_resnet("resnet34"),
+        }
 
 def get_net(name: str) -> QuantisableModule:
+    print(NETS[name].get_net())
     return NETS[name]
 
 # ========

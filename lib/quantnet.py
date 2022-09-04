@@ -59,6 +59,8 @@ class FakeQuantize(nn.Module):
 
 class QuantConfig:
     def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
+        # A list of integers, where the nth value denotes the number of bits on the nth quantisable layer
+        # We have two configs for the activation and weight bit widths.
         self.activation_bit_widths = activation_bit_widths
         self.weight_bit_widths = weight_bit_widths
 
@@ -124,9 +126,13 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
     quant_net = copy.deepcopy(net)
 
     start_layer_name, output_layers_names = quant_net.get_layers_to_track()
-    layers_to_mutate_names = [start_layer_name] + output_layers_names
-    assert_equal(len(layers_to_mutate_names), len(activation_histograms))#, "Unexpected number of histograms found"
-    assert_equal(len(layers_to_mutate_names), len(quant_config.activation_bit_widths))
+    fake_quant_layer_names = [start_layer_name] + output_layers_names
+    assert_equal(len(fake_quant_layer_names), len(activation_histograms))#, "Unexpected number of histograms found"
+    # Check length of config bit widths are as expected
+    assert_equal(len(fake_quant_layer_names), len(quant_config.activation_bit_widths))
+
+    quantisable_layer_names = quant_net.get_layers_to_quantise()
+    assert_equal(len(quantisable_layer_names), len(quant_config.weight_bit_widths))
 
     w = weights_bounds_alg
 
@@ -138,7 +144,7 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
 
     # MUST EXEC THIS BELOW CODE AFTER THE ABOVE LOOP
     # insert fake_quant layers (these layers are the activations)
-    for i, (histogram, layer_name) in enumerate(zip(activation_histograms, layers_to_mutate_names)):
+    for i, (histogram, layer_name) in enumerate(zip(activation_histograms, fake_quant_layer_names)):
         min_bin, max_bin = bounds_alg(histogram.values)
 
         min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
@@ -189,9 +195,12 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
             '6b': QuantConfig([6] * 12, [(6,6)] * 11),
             '4b': QuantConfig([4] * 12, [(4,4)] * 11),
             '5b': QuantConfig([5] * 12, [(5,5)] * 11)},
-            'resnet18': {'8b': QuantConfig([16] + [8] * 25, [(8,8)] * 21),
+            'resnet18': {'8b': QuantConfig([8] * 26, [(8,8)] * 21),
             '6b': QuantConfig([6] * 26, [(6,6)] * 21),
-            '4b': QuantConfig([4] * 26, [(4,4)] * 21)}}
+            '4b': QuantConfig([4] * 26, [(4,4)] * 21)},
+            'resnet34': {'8b': QuantConfig([8] * 42, [(8,8)] * 37),
+            '6b': QuantConfig([6] * 42, [(6,6)] * 37),
+            '4b': QuantConfig([4] * 42, [(4,4)] * 37)},}
     if quant_config_name not in configs[net_name]:
         print("Invalid configuration, try one of", configs.keys())
         return
