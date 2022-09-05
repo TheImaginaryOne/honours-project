@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import tqdm
 import pickle
+from dotenv import load_dotenv
 
 import torch
 import torchvision.models as models
@@ -13,13 +14,16 @@ from lib.layer_tracker import HistogramTracker, Histogram
 from lib.quantnet import test_quant
 from lib.fuser import fuse_conv_bn
 
+load_dotenv()
+
 parser = argparse.ArgumentParser("quant-net")
-parser.add_argument("images_dir", help="images directory", type=str)
+#parser.add_argument("images_dir", help="images directory", type=str)
 parser.add_argument("net_name", help="the net to test.", type=str)
-parser.add_argument("-l", "--labels-file", help="optional file with labels (use for image list)", type=str)
+#parser.add_argument("-l", "--labels-file", help="optional file with labels (use for image list)", type=str)
 
 subparsers = parser.add_subparsers(dest='which') # store subcommand name in "which" field
 
+parser_print_net = subparsers.add_parser('print-net')
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
 
@@ -102,35 +106,38 @@ def get_accuracy(label_file_name, file_name):
 
 def main(args):
     """ Test the network! """
-    images_dir = args.images_dir
-#    quant = args.type == "quant"
-#    print(f"Type: {args.type}")
-
-    testing_files = get_images(images_dir, args.labels_file)
+    val_images_dir = os.getenv("VAL_IMAGES")
+    calib_images_dir = os.getenv("CALIB_IMAGES")
 
     # train loop
     net = get_net(args.net_name)
 
     import torch
-    print(net)
 
-    if args.which == 'test-float':
-        image_gen = CustomImageData(testing_files)
-        test_accuracy(net, args.net_name, image_gen)
-    elif args.which == 'log-fixed':
+    if args.which == 'log-fixed':
+        testing_files = get_images(calib_images_dir, args.labels_file)
         image_gen = CustomImageData(testing_files)
         get_intermediate(net, args.net_name, image_gen)
-    elif args.which == 'test-fixed':
-        image_gen = CustomImageData(testing_files)
-        test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds, False) # in other module
-    elif args.which == "test-subset-fixed":
-        image_gen = CustomImageData(testing_files)
-
-        # test the neural net for all configurations
-        for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
-            print("Testing:", quant_config, bounds)
-            test_quant(net, args.net_name, image_gen, quant_config, bounds, args.ignore_existing) # in other module
     else:
-        print("No task selected.")
+        # contains a chosen subset of images and corresponding labels
+        labels_file = os.getenv("VAL_SUBSET_LIST")
+        # the list of image file names
+        testing_files = get_images(val_images_dir, labels_file)
+        image_gen = CustomImageData(testing_files)
+        if args.which == 'test-float':
+            test_accuracy(net, args.net_name, image_gen)
+        elif args.which == 'test-fixed':
+            test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds, False) # in other module
+        elif args.which == "test-subset-fixed":
+            # test the neural net for all configurations
+            for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
+                print("Testing:", quant_config, bounds)
+                test_quant(net, args.net_name, image_gen, quant_config, bounds, args.ignore_existing) # in other module
+        elif args.which == "print-net":
+            print(net.get_net())
+            print("-- Layers to quantise:", net.get_layers_to_quantise())
+            print("-- Layers to track output activations:", net.get_layers_to_track())
+        else:
+            print("No task selected.")
 
 main(args)
