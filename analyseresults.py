@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import argparse
+import seaborn as sns
+import matplotlib.pyplot as plt
 from tabulate import tabulate
 from lib.utils import CONFIG_SETS
 
@@ -70,7 +72,34 @@ def print_set():
         data.append({"quant_config": quant_config, "bounds": bounds, "acc": np.mean(labels == quant_pred_labels)})
 
     dataframe = pd.DataFrame(data).pivot(columns="quant_config", index="bounds", values="acc")
-    print(tabulate(dataframe, dataframe.columns.values, tablefmt="latex"))
+
+    # Set index.
+    new_index_list = []
+    for name in dataframe.index:
+        act_config, w_config = name.split("_")
+        readable = {'3': '99.9%', '4': '99.99%', '5': '99.999%', 'm': 'max'}
+        new_index_list.append({"activations": readable[act_config], "weights": readable[w_config]})
+
+    # plot dataframe as a heatmap.
+
+    new_index = pd.DataFrame(new_index_list, index=dataframe.index)
+    numeric_cols = dataframe.columns
+    dataframe = pd.concat((new_index, dataframe), axis=1)
+    dataframe = pd.melt(dataframe, id_vars=['activations', 'weights'], var_name='bit_config')
+
+    print(dataframe)
+    g = sns.catplot(data=dataframe, row='activations', y='weights', x='value', hue='bit_config', kind='bar', height=3, aspect=2.5)
+    for row in g.axes:
+        for ax in row:
+            for container in ax.containers:
+                ax.bar_label(container)
+                ax.set_xlim(0,1)
+            #ax.annotate("%.2f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()),
+            #     ha='center', va='center', fontsize=11, color='black', xytext=(0, 5),
+            #     textcoords='offset points')
+
+    plt.savefig(f'output/results_{args.net_name}_{args.subset}.png')
+    #print(tabulate(dataframe, dataframe.columns.values, tablefmt="latex", showindex=False))
 
 if args.command=="one":
     compare()
