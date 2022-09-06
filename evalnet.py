@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from lib.utils import iter_quantisable_modules_with_names, process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule, get_module,iter_trackable_modules, iter_trackable_modules_with_names
 from lib.layer_tracker import HistogramTracker, Histogram
 from lib.quantnet import test_quant
-from lib.fuser import fuse_conv_bn
 
 load_dotenv()
 
