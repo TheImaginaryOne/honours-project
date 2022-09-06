@@ -4,7 +4,7 @@ import pickle
 import os
 from torch import nn
 from typing import List, cast, Callable
-from lib.math_utils import decide_bounds_min_max, decide_bounds_percentile, min_pow_2, quantize_tensor_min_max, quantize_tensor_percentile
+from lib.math_utils import decide_bounds_min_max, decide_bounds_percentile, min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
 
 from lib.layer_tracker import HistogramTracker, Histogram
 from lib.utils import QuantisableModule, get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
@@ -146,7 +146,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
     # (the values outside these ranges are ignored, and can be "clipped")
     A_ = {'m': decide_bounds_min_max, '3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000), '6': dbp(1 / 1000000)}
     # The "bounds" algorithms for weights
-    B_ = {'m': quantize_tensor_min_max, '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000), '6': qtp(1 / 1000000)}
+    B_ = {'m': qtp(0.), '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000), '6': qtp(1 / 1000000)}
     bounds_configs = merge_dicts([{k1 + '_' + k2: (v1, v2) for (k2, v2) in B_.items()} for (k1, v1) in A_.items()])
 
     if bounds_config_name not in bounds_configs:
