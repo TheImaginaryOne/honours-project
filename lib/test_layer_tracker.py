@@ -1,4 +1,4 @@
-from layer_tracker import HistogramTracker
+from lib.layer_tracker import HistogramTracker
 
 import torch
 

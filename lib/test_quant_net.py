@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from quantnet import quantize_tensor, quantize_tensor_min_max, decide_bounds_min_max, decide_bounds_percentile
+from lib.math_utils import quantize_tensor, quantize_tensor_min_max, decide_bounds_min_max, decide_bounds_percentile
 
 def test_quant():
     tensor = torch.Tensor([-1.7, 5.6, 7.1, -7.8, -9.1])
