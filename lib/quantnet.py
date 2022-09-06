@@ -7,7 +7,8 @@ from typing import List, cast, Callable
 from lib.math_utils import decide_bounds_min_max, decide_bounds_percentile, min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
 
 from lib.layer_tracker import HistogramTracker, Histogram
-from lib.utils import QuantisableModule, get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
+from lib.utils import get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
+from lib.models import QuantisableModule
 
 class FakeQuantize(nn.Module):
     def __init__(self, bit_width: int = 8, scale: int = 1):

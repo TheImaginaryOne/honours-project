@@ -4,7 +4,7 @@ import argparse
 import seaborn as sns
 import matplotlib.pyplot as plt
 from tabulate import tabulate
-from lib.utils import CONFIG_SETS
+from lib.models import CONFIG_SETS
 
 np.set_printoptions(suppress=True)
 
