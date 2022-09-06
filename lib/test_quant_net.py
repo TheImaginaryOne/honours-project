@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from lib.math_utils import quantize_tensor, quantize_tensor_min_max, decide_bounds_min_max, decide_bounds_percentile
+from lib.math_utils import quantize_tensor, quantize_tensor_percentile, decide_bounds_min_max, decide_bounds_percentile, quantize_tensor_percentile
 
 def test_quant():
     tensor = torch.Tensor([-1.7, 5.6, 7.1, -7.8, -9.1])
@@ -12,7 +12,7 @@ def test_quant():
 def test_quant_min_max():
     tensor = torch.Tensor([-1.7, 5.6, 7.1, -7.8, -9.1])
 
-    quantized = quantize_tensor_min_max(tensor, 3)
+    quantized = quantize_tensor_percentile(tensor, 3, 0., 1.)
     assert torch.equal(torch.Tensor([0, 4, 8, -8, -8]), quantized)
 
 def test_decide_histogram_min_max():
