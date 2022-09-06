@@ -1,5 +1,5 @@
 import torch
-from lib.math import min_pow_2
+from lib.math_utils import min_pow_2
 
 class Histogram:
     def __init__(self, range_pow_2, values):
@@ -12,6 +12,7 @@ class HistogramTracker:
     def __init__(self, bin_count_pow_2=8):
         # bin range from -2**range_pow_2 to +2**range_pow_2
         self.range_pow_2 = None
+        # have 2 ** bin_count_pow_2 bins.
         self.bin_count_pow_2 = bin_count_pow_2
         self.histogram = None
 
@@ -40,7 +41,7 @@ class HistogramTracker:
                 # scale down the old histogram by 2**scale_factor_pow_2.
                 # Note the first 
                 scale_factor_pow_2 = min(new_range_pow_2 - self.range_pow_2, 
-                        self.bin_count_pow_2 + 1)
+                        self.bin_count_pow_2 - 1)
 
                 # sum windows of every scale_factor elements
                 scaled_hist = torch.sum(torch.reshape(self.histogram, (-1, 2**scale_factor_pow_2)), 1)
