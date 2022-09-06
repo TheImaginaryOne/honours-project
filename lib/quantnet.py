@@ -7,7 +7,7 @@ from typing import List, cast, Callable
 from lib.math import min_pow_2
 
 from lib.layer_tracker import HistogramTracker, Histogram
-from lib.utils import QuantisableModule, get_module, set_module
+from lib.utils import QuantisableModule, get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
 
 def quantize_tensor(input: torch.Tensor, bit_width: int, scale: int) -> torch.Tensor:
     """ Fake quantize utility """
@@ -64,6 +64,12 @@ class QuantConfig:
         self.activation_bit_widths = activation_bit_widths
         self.weight_bit_widths = weight_bit_widths
 
+# Sometimes numpy's comparisons are different to python's comparisons,
+# which triggers the assertion error
+# see https://stackoverflow.com/questions/55944977/less-than-or-equal-to-operator-for-numpy-floating-points
+def approx_le(x, y):
+    return x <= y or np.isclose(x, y)
+
 def get_bin_for_percentile(cdf: np.ndarray, percentile: float, is_top: bool):
     bin_1 = len(cdf[cdf <= percentile]) - 1
     #print(bin_1)
@@ -73,7 +79,9 @@ def get_bin_for_percentile(cdf: np.ndarray, percentile: float, is_top: bool):
     if bin_1 < 0:
         bin = bin_2
     else:
-        assert cdf[bin_1] <= percentile <= cdf[bin_2]
+        assert approx_le(cdf[bin_1], percentile) and approx_le(percentile, cdf[bin_2]),\
+             f"{bin_1} => {cdf[bin_1]}, {percentile}, {bin_2} => {cdf[bin_2]}"
+
         if percentile - cdf[bin_1] < cdf[bin_2] - percentile:
             bin = bin_1
         else:
@@ -98,23 +106,6 @@ def decide_bounds_min_max(histogram: np.ndarray):
 
     return (min_bin, max_bin)
 
-def get_intermediate_tracker(quant_net) -> list[HistogramTracker]:
-    # Log all activations (outputs) of relevant layers
-    output_layers = [quant_net.quantize] + [cast(VggUnit, unit).relu for unit in quant_net.features] \
-            + [cast(FakeQuantize, quant_net.classifier[i]) for i in [2, 5, 7]]
-
-    hist_tracker = [HistogramTracker() for i in range(len(output_layers))]
-
-    def hist_tracker_hook(hist_tracker):
-        def f(module, input, output):
-            hist_tracker.update(output)
-        return f
-
-    for i, layer in enumerate(output_layers):
-        layer.register_forward_hook(hist_tracker_hook(hist_tracker[i]))
-    
-    return hist_tracker
-
 def assert_equal(a, b):
     assert a == b, f"{a} != {b}"
 
@@ -125,26 +116,30 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
     import copy
     quant_net = copy.deepcopy(net)
 
-    start_layer_name, output_layers_names = quant_net.get_layers_to_track()
-    fake_quant_layer_names = [start_layer_name] + output_layers_names
-    assert_equal(len(fake_quant_layer_names), len(activation_histograms))#, "Unexpected number of histograms found"
-    # Check length of config bit widths are as expected
-    assert_equal(len(fake_quant_layer_names), len(quant_config.activation_bit_widths))
+    trackable_modules = list(iter_trackable_modules_with_names(net.get_net()))
+    # Add start module because we must insert a fakequantise before the first layer too!
+    start = trackable_modules[0]
+    trackable_modules = [start] + trackable_modules
 
-    quantisable_layer_names = quant_net.get_layers_to_quantise()
-    assert_equal(len(quantisable_layer_names), len(quant_config.weight_bit_widths))
+    assert_equal(len(trackable_modules), len(activation_histograms))#, "Unexpected number of histograms found"
+    # Check length of config bit widths are as expected
+    assert_equal(len(trackable_modules), len(quant_config.activation_bit_widths))
+
+    quantisable_layers = list(iter_quantisable_modules_with_names(net.get_net()))
+    assert_equal(len(quantisable_layers), len(quant_config.weight_bit_widths))
 
     w = weights_bounds_alg
 
     # quantise the weights of the layers.
-    for i, layer_name in enumerate(quant_net.get_layers_to_quantise()):
+    for i, (layer_name, _) in enumerate(quantisable_layers):
         layer = get_module(quant_net.get_net(), layer_name)
         set_module(quant_net.get_net(), layer_name + ".weight", nn.Parameter(w(layer.weight, quant_config.weight_bit_widths[i][0])))
         set_module(quant_net.get_net(), layer_name + ".bias", nn.Parameter(w(layer.bias, quant_config.weight_bit_widths[i][1])))
+    
 
     # MUST EXEC THIS BELOW CODE AFTER THE ABOVE LOOP
     # insert fake_quant layers (these layers are the activations)
-    for i, (histogram, layer_name) in enumerate(zip(activation_histograms, fake_quant_layer_names)):
+    for i, (histogram, (layer_name, _)) in enumerate(zip(activation_histograms, trackable_modules)):
         min_bin, max_bin = bounds_alg(histogram.values)
 
         min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
@@ -165,6 +160,7 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
             # the start layer
             set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(fake_quant, layer))
 
+    #print(quant_net.get_net())
 
     return quant_net
 
@@ -195,12 +191,19 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
             '6b': QuantConfig([6] * 12, [(6,6)] * 11),
             '4b': QuantConfig([4] * 12, [(4,4)] * 11),
             '5b': QuantConfig([5] * 12, [(5,5)] * 11)},
-            'resnet18': {'8b': QuantConfig([8] * 26, [(8,8)] * 21),
-            '6b': QuantConfig([6] * 26, [(6,6)] * 21),
-            '4b': QuantConfig([4] * 26, [(4,4)] * 21)},
+            'resnet18': {'8b': QuantConfig([8] * 41, [(8,8)] * 21),
+            '6b': QuantConfig([6] * 41, [(6,6)] * 21),
+            '4b': QuantConfig([4] * 41, [(4,4)] * 21),
+            '8b6b': QuantConfig([8] * 21 + [6] * 21, [(8,8)] * 10 + [(6,6)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
+            '8b4b': QuantConfig([8] * 21 + [4] * 21, [(8,8)] * 10 + [(4,4)] * 11) # 8 bits for first two blocks; 6 bits for next blocks.
+            },
             'resnet34': {'8b': QuantConfig([8] * 42, [(8,8)] * 37),
             '6b': QuantConfig([6] * 42, [(6,6)] * 37),
-            '4b': QuantConfig([4] * 42, [(4,4)] * 37)},}
+            '4b': QuantConfig([4] * 42, [(4,4)] * 37),
+            '8b6b': QuantConfig([8] * 19 + [6] * 23, [(8,8)] * 16 + [(6,6)] * 21), # 8 bits for first two blocks; 6 bits for next blocks.
+            '8b4b': QuantConfig([8] * 19 + [4] * 23, [(8,8)] * 16 + [(4,4)] * 21) # 8 bits for first two blocks; 6 bits for next blocks.
+            },
+            }
     if quant_config_name not in configs[net_name]:
         print("Invalid configuration, try one of", configs.keys())
         return

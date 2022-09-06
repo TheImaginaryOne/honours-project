@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from lib.utils import process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule, get_module
+from lib.utils import iter_quantisable_modules_with_names, process_img, get_images, CustomImageData, get_net, CONFIG_SETS, QuantisableModule, get_module,iter_trackable_modules, iter_trackable_modules_with_names
 from lib.layer_tracker import HistogramTracker, Histogram
 from lib.quantnet import test_quant
 from lib.fuser import fuse_conv_bn
@@ -59,9 +59,10 @@ def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
 def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
     # Log all activations (outputs) of relevant layers
     # Note: these return names
-    start_layer_name, output_layers_names = net.get_layers_to_track()
-    start_layer = get_module(net.get_net(), start_layer_name)
-    output_layers = [get_module(net.get_net(), layer_name) for layer_name in output_layers_names]
+    modules = list(iter_trackable_modules(net.get_net()))
+
+    start_layer = modules[0]
+    output_layers = modules
 
     hist_tracker = [HistogramTracker() for i in range(1 + len(output_layers))]
 
@@ -115,7 +116,7 @@ def main(args):
     import torch
 
     if args.which == 'log-fixed':
-        testing_files = get_images(calib_images_dir, args.labels_file)
+        testing_files = get_images(calib_images_dir)
         image_gen = CustomImageData(testing_files)
         get_intermediate(net, args.net_name, image_gen)
     else:
@@ -135,8 +136,12 @@ def main(args):
                 test_quant(net, args.net_name, image_gen, quant_config, bounds, args.ignore_existing) # in other module
         elif args.which == "print-net":
             print(net.get_net())
-            print("-- Layers to quantise:", net.get_layers_to_quantise())
-            print("-- Layers to track output activations:", net.get_layers_to_track())
+            print("-- Layers to track:")
+            for name, child in iter_trackable_modules_with_names(net.get_net()):
+                print(name, type(child))
+            print("-- Layers to quantise:")
+            for name, child in iter_quantisable_modules_with_names(net.get_net()):
+                print(name, type(child))
         else:
             print("No task selected.")
 

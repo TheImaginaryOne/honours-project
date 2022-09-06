@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import PIL
 from typing import Optional
+import torchvision
 from torchvision import transforms as T
 from torchvision.transforms import InterpolationMode
 
@@ -15,25 +16,31 @@ process_img = T.Compose([T.Resize(256, interpolation=InterpolationMode.BICUBIC),
 
 import itertools
 
+def self_product(l):
+    return list(itertools.chain(*[[n1 + '_' + n2 for n2 in l] for n1 in l]))
+
 NAMES = ['m', '3', '4', '5']
-ALL_BOUNDS = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES] for n1 in NAMES]))
-NAMES_RESNET = ['3', '4', '5', 'm']
-ALL_BOUNDS_RESNET = list(itertools.chain(*[[n1 + '_' + n2 for n2 in NAMES_RESNET] for n1 in NAMES_RESNET]))
+A = ['3', '4', '5', 'm']
 
 ALL_VGGNET_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
                 "8b6b_fc",
                 "8b4b_fc",
-                ], ALL_BOUNDS)
+                ], self_product(A))
 
-ALL_RESNET_CONFIGS = itertools.product(["8b", 
+ALL_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
-                ], ALL_BOUNDS_RESNET)
+                #"8b6b",
+                #"8b4b",
+                ], self_product(A))
 
 # the product of tabulated sets
-CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, 'resnet18': {'all': ALL_RESNET_CONFIGS}, 'resnet34': {'all': ALL_RESNET_CONFIGS}} #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, \
+    'resnet18': {'all': ALL_CONFIGS},
+    'resnet34': {'all': ALL_CONFIGS},
+    } #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
 
 # Utility to set network to eval mode.
 def set_eval(net):
@@ -41,25 +48,55 @@ def set_eval(net):
     return net
 
 def fuse_resnet(net):
-    fused_model = torch.quantization.fuse_modules(net, [["conv1", "bn1"]], inplace=True)
+    fused_model = torch.quantization.fuse_modules(net, [["conv1", "bn1", "relu"]], inplace=True)
     for module_name, module in fused_model.named_children():
         if "layer" in module_name:
             for basic_block_name, basic_block in module.named_children():
-                torch.quantization.fuse_modules(basic_block, [["conv1", "bn1"], ["conv2", "bn2"]], inplace=True)
+                torch.quantization.fuse_modules(basic_block, [["conv1", "bn1", "relu"], ["conv2", "bn2"]], inplace=True)
                 for sub_block_name, sub_block in basic_block.named_children():
                     if sub_block_name == "downsample":
                         torch.quantization.fuse_modules(sub_block, [["0", "1"]], inplace=True)
     return fused_model
 
+# ====
+def iter_trackable_modules(module: torch.nn.Module):
+    for _, child in iter_trackable_modules_helper_(module, None):
+        yield child
+
+def iter_trackable_modules_with_names(module: torch.nn.Module):
+    yield from iter_trackable_modules_helper_(module, None)
+
+def iter_trackable_modules_helper_(module: torch.nn.Module, parent_name: Optional[str]):
+    """ Iterate moduls recursively """
+    # These are leaves that are sequential modules but we want to ignore
+    # the "content" inside, because they are assumed to be one operation in the quantised version.
+    seq_leaf_types = [torchvision.ops.misc.ConvNormActivation, torch.nn.intrinsic.modules._FusedModule]
+
+    ignore = [torch.nn.Identity, torch.nn.Dropout]
+    for name, child in module.named_children():
+        full_name = name if parent_name is None else f"{parent_name}.{name}"
+        # not a leaf; ignore it
+        if not type(child) in seq_leaf_types:
+            yield from iter_trackable_modules_helper_(child, full_name)
+            
+        if not (type(child) in ignore or isinstance(child, torch.nn.Sequential)) \
+            or type(child) in seq_leaf_types:
+            yield (full_name, child)
+
+def iter_quantisable_modules_with_names(module: torch.nn.Module):
+    yield from iter_quantisable_modules_helper_(module, None)
+
+def iter_quantisable_modules_helper_(module: torch.nn.Module, parent_name: Optional[str]):
+    """ Iterate moduls recursively """
+    leaves = [torch.nn.Conv2d, torch.nn.Linear]
+    for name, child in module.named_children():
+        full_name = name if parent_name is None else f"{parent_name}.{name}"
+        yield from iter_quantisable_modules_helper_(child, full_name)
+            
+        if type(child) in leaves:
+            yield (full_name, child)
+
 class QuantisableModule(ABC):
-    @abstractmethod
-    def get_layers_to_track(self) -> tuple[str, list[str]]:
-        pass
-
-    @abstractmethod
-    def get_layers_to_quantise(self) -> list[str]:
-        pass
-
     @abstractmethod
     def get_net(self) -> torch.nn.Module:
         pass
@@ -89,16 +126,6 @@ class QuantisableVgg11(QuantisableModule):
     def __init__(self):
         self.net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
         self.net.eval()
-    def get_layers_to_track(self) -> tuple[str, list[str]]:
-        start_layer = "features.0"
-        # Track the activations of the ReLU layers
-        #[f"features.{i}" for i in [0, 3, 6, 8, 11, 13, 16, 18]] \
-        #  + [f"classifier.{i}" for i in [0, 3, 6]]
-        output_layers = [f"features.{i}" for i in [1, 4, 7, 9, 12, 14, 17, 19]] \
-           + [f"classifier.{i}" for i in [1, 4, 6]]
-        return start_layer, output_layers
-    def get_layers_to_quantise(self) -> list[str]:
-        return [f"features.{i}" for i in [0, 3, 6, 8, 11, 13, 16, 18]] + [f"classifier.{i}" for i in [0, 3, 6]]
     def get_net(self) -> torch.nn.Module:
         return self.net
 
@@ -110,36 +137,6 @@ class QuantisableResnet(QuantisableModule):
         self.net.eval()
         self.net = fuse_resnet(self.net)
         self.layer_sizes = layer_sizes
-    def get_layers_to_track(self) -> tuple[str, list[str]]:
-        start_layer = "conv1"
-        output_layers = ["relu"]
-        # loop through each basic block.
-        for i, l in enumerate(QuantisableResnet.layer_names):
-            unit_count = self.layer_sizes[i]
-            for j in range(unit_count):
-                output_layers.append(l + f".{j}.relu")
-                output_layers.append(l + f".{j}.bn2")
-                if i > 0 and j == 0:
-                    output_layers.append(l + f".{j}.downsample.1")
-            # combining from each residual connection.
-            output_layers.append(l)
-        # The adaptive avg pool should be a no-op if the input is exactly 224x224
-        #output_layers.append("avgpool")
-        output_layers.append("fc")
-        return start_layer, output_layers
-    def get_layers_to_quantise(self) -> list[str]:
-        output_layers = []
-        output_layers.append("conv1")
-        # loop through each basic block.
-        for i, l in enumerate(QuantisableResnet.layer_names):
-            unit_count = self.layer_sizes[i]
-            for j in range(unit_count):
-                output_layers.append(l + f".{j}.conv1")
-                output_layers.append(l + f".{j}.conv2")
-                if i > 0 and j == 0:
-                    output_layers.append(l + f".{j}.downsample.0")
-        output_layers.append("fc")
-        return output_layers
     def get_net(self) -> torch.nn.Module:
         return self.net
 
@@ -155,7 +152,7 @@ NETS = {'vgg11': QuantisableVgg11(),
         }
 
 def get_net(name: str) -> QuantisableModule:
-    print(NETS[name].get_net())
+    #print(NETS[name].get_net())
     return NETS[name]
 
 # ========
