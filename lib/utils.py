@@ -39,9 +39,9 @@ def iter_trackable_modules_helper_(module: torch.nn.Module, parent_name: Optiona
         # not a leaf; ignore it
         if not type(child) in seq_leaf_types:
             yield from iter_trackable_modules_helper_(child, full_name)
-            
-        if not (type(child) in ignore or isinstance(child, torch.nn.Sequential)) \
-            or type(child) in seq_leaf_types:
+
+        # is it a leaf?
+        if len(child._modules) == 0 and type(child) not in ignore:
             yield (full_name, child)
 
 def iter_quantisable_modules_with_names(module: torch.nn.Module):
