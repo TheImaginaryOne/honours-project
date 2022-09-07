@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 import os
 from torch import nn
-from typing import List, cast, Callable
+from typing import Any, List, cast, Callable
 from lib.math_utils import decide_bounds_min_max, decide_bounds_percentile, min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
 
 from lib.layer_tracker import HistogramTracker, Histogram
@@ -87,7 +87,6 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
             # the start layer
             set_module(quant_net.get_net(), layer_name, torch.nn.Sequential(fake_quant, layer))
 
-    #print(quant_net.get_net())
 
     return quant_net
 
@@ -180,3 +179,46 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
             #print(concated.shape)
             np.save(f, concated)
 
+
+percentiles = {'1e-3': 1 / 1000, '1e-4': 1 / 10000, '1e-5': 1 / 100000, 'm': 0.}
+def get_net_weight_bounds(net: QuantisableModule) -> List[Any]:
+    """ 
+    Calculate the bounds of the weights for different percentiles.
+    Only for debug / visualisation purposes
+    """
+    quantisable_layers = list(iter_quantisable_modules_with_names(net.get_net()))
+
+    bounds = []
+
+    for i, (layer_name, layer) in enumerate(quantisable_layers):
+        for name, perc in percentiles.items():
+            weight_bounds = get_tensor_percentile(layer.weight.detach(), perc, 1 - perc)
+            bounds.append((layer_name, name, 'weight', weight_bounds[0], weight_bounds[1]))
+
+            bias_bounds = get_tensor_percentile(layer.bias.detach(), perc, 1 - perc)
+            bounds.append((layer_name, name, 'bias', bias_bounds[0], bias_bounds[1]))
+    
+    return bounds
+
+def get_net_activation_bounds(net_name: str, net: QuantisableModule) -> List[Any]:
+    with open(f"output/outputhistogram_{net_name}.pkl", "rb") as f:
+        activation_histograms = pickle.load(f)
+    
+    bounds = []
+
+    trackable_modules = [('start', None)] + list(iter_trackable_modules_with_names(net.get_net()))
+
+    for i, (histogram, (layer_name, _)) in enumerate(zip(activation_histograms, trackable_modules)):
+        for name, perc in percentiles.items():
+            if perc == 0.:
+                min_bin, max_bin = decide_bounds_min_max(histogram.values)
+            else:
+                min_bin, max_bin = decide_bounds_percentile(histogram.values, perc)
+    
+            # TODO move
+            min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
+            max_val = (max_bin - len(histogram.values) // 2 + 1) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
+
+            bounds.append((layer_name, name, min_val, max_val))
+    
+    return bounds

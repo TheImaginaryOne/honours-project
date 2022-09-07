@@ -1,4 +1,5 @@
 import math
+from typing import Tuple
 import torch
 import numpy as np
 
@@ -22,13 +23,15 @@ def min_pow_2_scale(min_val: float, max_val: float, bit_width: int):
     y = min_pow_2(max_val / (2**(bit_width-1) - 1./2))
     return max(x, y)
 
+# ====
+def get_tensor_percentile(input: torch.Tensor, lq: float, uq: float) -> Tuple[float, float]:
+    p = np.quantile(input.numpy(), [lq, uq])
+    return p[0], p[1]
 
-def quantize_tensor_min_max(input: torch.Tensor, bit_width: int) -> torch.Tensor:
-    return quantize_tensor_percentile(input, bit_width, 0., 1.)
-
-def quantize_tensor_percentile(input: torch.Tensor, bit_width: int, lq: float, rq: float) -> torch.Tensor:
+def quantize_tensor_percentile(input: torch.Tensor, bit_width: int, lq: float, uq: float) -> torch.Tensor:
+    """ Quantise tensor, bounded according to lower quartile and upper quartile """
     #print(input.size())
-    p = np.quantile(input.numpy(), [lq, rq])
+    p = np.quantile(input.numpy(), [lq, uq])
     min_val, max_val = p[0], p[1]
     # print("quantile", min_val, max_val)
     # Minimum power of 2 required to represent all tensor values
@@ -50,7 +53,7 @@ def approx_le(x, y):
     return x <= y or np.isclose(x, y)
 
 def get_bin_for_percentile(cdf: np.ndarray, percentile: float, is_top: bool):
-    bin_1 = len(cdf[cdf <= percentile]) - 1
+    bin_1 = len(cdf[cdf < percentile]) - 1
     #print(bin_1)
     bin_2 = bin_1 + 1
     # is it closer to bin 1?
@@ -58,10 +61,12 @@ def get_bin_for_percentile(cdf: np.ndarray, percentile: float, is_top: bool):
     if bin_1 < 0:
         bin = bin_2
     else:
-        assert approx_le(cdf[bin_1], percentile) and approx_le(percentile, cdf[bin_2]),\
-             f"{bin_1} => {cdf[bin_1]}, {percentile}, {bin_2} => {cdf[bin_2]}"
+        u_val = cdf[bin_2] if bin_2 < len(cdf) else 1.
+        l_val = cdf[bin_1]
+        assert approx_le(l_val, percentile) and approx_le(percentile, u_val),\
+             f"{bin_1} => {l_val}, {percentile}, {bin_2} => {u_val}"
 
-        if percentile - cdf[bin_1] < cdf[bin_2] - percentile:
+        if percentile - l_val < u_val - percentile:
             bin = bin_1
         else:
             bin = bin_2
