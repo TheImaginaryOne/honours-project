@@ -3,3 +3,6 @@ output
 mobilenet
 .ipynb_checkpoints
 **/__pycache__/
+/venv
+.env
+pyrightconfig.json
