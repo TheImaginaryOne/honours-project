@@ -1,12 +1,34 @@
+from typing import List
 import torch
 from lib.math_utils import min_pow_2
+import numpy as np
 
 class Histogram:
     def __init__(self, range_pow_2, values):
         # The histogram covers the numbers from -2^range_pow_2 to 2^range_pow_2
         self.range_pow_2 = range_pow_2
-        # array of counts for each bin
+        # array of counts for each bin. We assume it is an even number
         self.values = values
+
+        self.cdf = np.concatenate(([0], np.cumsum(values) / np.sum(values)))
+        # x coordinates of cdf
+        self.cdf_x = np.linspace(
+            -(2. ** self.range_pow_2),
+             2. ** self.range_pow_2,
+             len(values) + 1)
+    
+    def percentile(self, p: List[int]):
+        """
+        Get values for percentile. May be a floating point
+        May not give correct values for p = 0 or 1
+        """
+        return np.interp(p, self.cdf, self.cdf_x)
+    
+    def minmax(self):
+        min_bin = np.nonzero(self.values)[0][0]
+        max_bin = np.nonzero(self.values)[0][-1]
+
+        return self.cdf_x[min_bin], self.cdf_x[max_bin + 1]
 
 class HistogramTracker:
     def __init__(self, bin_count_pow_2=8):
@@ -56,3 +78,11 @@ class HistogramTracker:
             hist = hist + add_hist
             self.histogram = hist
             self.range_pow_2 = max_input_pow_2
+
+def decide_bounds_percentile(histogram: Histogram, tail: float):
+    cdf = np.cumsum(histogram.values) / np.sum(histogram.values)
+    #print(cdf)
+    return histogram.percentile([tail, 1. - tail])
+
+def decide_bounds_min_max(histogram: Histogram):
+    return histogram.minmax()

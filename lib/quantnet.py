@@ -4,9 +4,9 @@ import pickle
 import os
 from torch import nn
 from typing import Any, List, cast, Callable
-from lib.math_utils import decide_bounds_min_max, decide_bounds_percentile, min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
+from lib.math_utils import min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
 
-from lib.layer_tracker import HistogramTracker, Histogram
+from lib.layer_tracker import HistogramTracker, Histogram, decide_bounds_min_max, decide_bounds_percentile
 from lib.utils import get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
 from lib.models import QuantisableModule
 
@@ -67,10 +67,7 @@ def setup_quant_net(net: QuantisableModule, activation_histograms: List[Histogra
     # MUST EXEC THIS BELOW CODE AFTER THE ABOVE LOOP
     # insert fake_quant layers (these layers are the activations)
     for i, (histogram, (layer_name, _)) in enumerate(zip(activation_histograms, trackable_modules)):
-        min_bin, max_bin = bounds_alg(histogram.values)
-
-        min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
-        max_val = (max_bin - len(histogram.values) // 2 + 1) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
+        min_val, max_val = bounds_alg(histogram)
 
         fake_quant = FakeQuantize()
         fake_quant.bit_width = quant_config.activation_bit_widths[i]
@@ -211,13 +208,9 @@ def get_net_activation_bounds(net_name: str, net: QuantisableModule) -> List[Any
     for i, (histogram, (layer_name, _)) in enumerate(zip(activation_histograms, trackable_modules)):
         for name, perc in percentiles.items():
             if perc == 0.:
-                min_bin, max_bin = decide_bounds_min_max(histogram.values)
+                min_val, max_val = decide_bounds_min_max(histogram)
             else:
-                min_bin, max_bin = decide_bounds_percentile(histogram.values, perc)
-    
-            # TODO move
-            min_val = (min_bin - len(histogram.values) // 2) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
-            max_val = (max_bin - len(histogram.values) // 2 + 1) / len(histogram.values) * 2**(histogram.range_pow_2 + 1)
+                min_val, max_val = decide_bounds_percentile(histogram, perc)
 
             bounds.append((layer_name, name, min_val, max_val))
     
