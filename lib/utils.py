@@ -8,6 +8,8 @@ import torchvision
 from torchvision import transforms as T
 from torchvision.transforms import InterpolationMode
 
+from lib.models import QuantizableConvRelu
+
 normalize = T.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
 
@@ -31,7 +33,7 @@ def iter_trackable_modules_helper_(module: torch.nn.Module, parent_name: Optiona
     """ Iterate moduls recursively """
     # These are leaves that are sequential modules but we want to ignore
     # the "content" inside, because they are assumed to be one operation in the quantised version.
-    seq_leaf_types = [torchvision.ops.misc.ConvNormActivation, torch.nn.intrinsic.modules._FusedModule]
+    seq_leaf_types = [QuantizableConvRelu, torch.nn.intrinsic.modules.ConvReLU2d, torch.nn.intrinsic.modules.LinearReLU]
 
     ignore = [torch.nn.Identity, torch.nn.Dropout]
     for name, child in module.named_children():
@@ -41,7 +43,7 @@ def iter_trackable_modules_helper_(module: torch.nn.Module, parent_name: Optiona
             yield from iter_trackable_modules_helper_(child, full_name)
 
         # is it a leaf?
-        if len(child._modules) == 0 and type(child) not in ignore:
+        if (len(child._modules) == 0 or type(child) in seq_leaf_types) and type(child) not in ignore:
             yield (full_name, child)
 
 def iter_quantisable_modules_with_names(module: torch.nn.Module):

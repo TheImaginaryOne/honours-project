@@ -104,27 +104,28 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         activation_histograms = pickle.load(f)
 
     import tqdm
-    configs = {'vgg11': {'8b': QuantConfig([8] * 12, [(8,8)] * 11), 
-            '8b7b_fc': QuantConfig([8] * 9 + [7] * 3, [(8,8)] * 8 + [(7,7)] * 3),
-            '8b6b_fc': QuantConfig([8] * 9 + [6] * 3, [(8,8)] * 8 + [(6,6)] * 3),
-            '8b5b_fc': QuantConfig([8] * 9 + [5] * 3, [(8,8)] * 8 + [(5,5)] * 3),
-            '8b4b_fc': QuantConfig([8] * 9 + [4] * 3, [(8,8)] * 8 + [(4,4)] * 3),
+    configs = {'vgg11': {'8b': QuantConfig([8] * 18, [(8,8)] * 11), 
+            '7b': QuantConfig([7] * 18, [(7,7)] * 11),
+            '6b': QuantConfig([6] * 18, [(6,6)] * 11),
+            '4b': QuantConfig([4] * 18, [(4,4)] * 11),
+            '5b': QuantConfig([5] * 18, [(5,5)] * 11),
+            '8b7b_fc': QuantConfig([8] * 14 + [7] * 4, [(8,8)] * 8 + [(7,7)] * 3),
+            '8b6b_fc': QuantConfig([8] * 14 + [6] * 4, [(8,8)] * 8 + [(6,6)] * 3),
+            '8b5b_fc': QuantConfig([8] * 14 + [5] * 4, [(8,8)] * 8 + [(5,5)] * 3),
+            '8b4b_fc': QuantConfig([8] * 14 + [4] * 4, [(8,8)] * 8 + [(4,4)] * 3)},
             #'6b4b_1': QuantConfig([6] * 3 + [4] * 9, [(6,6)] * 2 + [(4,4)] * 9),
-            '7b': QuantConfig([7] * 12, [(7,7)] * 11),
-            '6b': QuantConfig([6] * 12, [(6,6)] * 11),
-            '4b': QuantConfig([4] * 12, [(4,4)] * 11),
-            '5b': QuantConfig([5] * 12, [(5,5)] * 11)},
-            'resnet18': {'8b': QuantConfig([8] * 41, [(8,8)] * 21),
-            '6b': QuantConfig([6] * 41, [(6,6)] * 21),
-            '4b': QuantConfig([4] * 41, [(4,4)] * 21),
-            '8b6b': QuantConfig([8] * 21 + [6] * 21, [(8,8)] * 10 + [(6,6)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
-            '8b4b': QuantConfig([8] * 21 + [4] * 21, [(8,8)] * 10 + [(4,4)] * 11) # 8 bits for first two blocks; 6 bits for next blocks.
+            'resnet18': {'8b': QuantConfig([8] * 32, [(8,8)] * 21),
+            '6b': QuantConfig([6] * 32, [(6,6)] * 21),
+            '4b': QuantConfig([4] * 32, [(4,4)] * 21),
+            '8b6b': QuantConfig([8] * 15 + [6] * 17, [(8,8)] * 10 + [(6,6)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
+            '8b4b': QuantConfig([8] * 15 + [4] * 17, [(8,8)] * 10 + [(4,4)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
+            #'8b4bl': QuantConfig([8] * 30 + [4] * 11, [(8,8)] * 15 + [(4,4)] * 6) # 8 bits for first two blocks; 6 bits for next blocks.
             },
-            'resnet34': {'8b': QuantConfig([8] * 42, [(8,8)] * 37),
-            '6b': QuantConfig([6] * 42, [(6,6)] * 37),
-            '4b': QuantConfig([4] * 42, [(4,4)] * 37),
-            '8b6b': QuantConfig([8] * 19 + [6] * 23, [(8,8)] * 16 + [(6,6)] * 21), # 8 bits for first two blocks; 6 bits for next blocks.
-            '8b4b': QuantConfig([8] * 19 + [4] * 23, [(8,8)] * 16 + [(4,4)] * 21) # 8 bits for first two blocks; 6 bits for next blocks.
+            'resnet34': {'8b': QuantConfig([8] * 73, [(8,8)] * 37),
+            '6b': QuantConfig([6] * 73, [(6,6)] * 37),
+            '4b': QuantConfig([4] * 73, [(4,4)] * 37),
+            '8b6b': QuantConfig([8] * 32 + [6] * 41, [(8,8)] * 16 + [(6,6)] * 21), # 8 bits for first two blocks; 6 bits for next blocks.
+            '8b4b': QuantConfig([8] * 32 + [4] * 41, [(8,8)] * 16 + [(4,4)] * 21) # 8 bits for first two blocks; 6 bits for next blocks.
             },
             }
     if quant_config_name not in configs[net_name]:

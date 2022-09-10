@@ -19,8 +19,8 @@ ALL_VGGNET_CONFIGS = itertools.product(["8b",
 ALL_CONFIGS = itertools.product(["8b", 
                 "6b",
                 "4b",
-                #"8b6b",
-                #"8b4b",
+                "8b6b",
+                "8b4b",
                 ], self_product(A))
 
 # the product of tabulated sets
@@ -34,9 +34,17 @@ class QuantisableModule(ABC):
     def get_net(self) -> torch.nn.Module:
         pass
 
+def fuse_vgg11(net):
+    features_fuse = [["0", "1"], ["3", "4"], ["6", "7"], ["8", "9"], ["11", "12"], ["13", "14"], ["16", "17"], ["18", "19"]]
+    clf_fuse = [["0", "1"], ["3", "4"]]
+    fused_model = deepcopy(net)
+    fused_model.features = torch.quantization.fuse_modules(net.features, features_fuse)
+    fused_model.classifier = torch.quantization.fuse_modules(net.classifier, clf_fuse)
+    return fused_model
 class QuantisableVgg11(QuantisableModule):
     def __init__(self):
         self.net = torch.hub.load('pytorch/vision:v0.10.0', 'vgg11', pretrained=True)
+        self.net = fuse_vgg11(self.net)
         self.net.eval()
     def get_net(self) -> torch.nn.Module:
         return self.net
@@ -56,6 +64,17 @@ def fuse_resnet(net):
 
                 setattr(module, block_name, basic_block)
     return fused_model
+class QuantizableConvRelu(torch.nn.Module):
+    def __init__(self, conv: torch.nn.Module, relu: torch.nn.Module) -> None:
+        super().__init__()
+
+        self.conv = conv
+        self.relu = relu
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.conv(x)
+        out = self.relu(out)
+        return out
 
 class QuantizableBasicBlock(torch.nn.Module):
     """
@@ -67,9 +86,9 @@ class QuantizableBasicBlock(torch.nn.Module):
         super().__init__()
         # copy the old basic block.
 
-        # For inference purposes, we don't need the batchnorm layer.
-        self.conv1 = deepcopy(block.conv1)
-        self.relu1 = torch.nn.ReLU()
+        # For inference purposes, we don't need the batchnorm layer
+        # (as we fused it before).
+        self.conv_relu1 = QuantizableConvRelu(deepcopy(block.conv1), torch.nn.ReLU())
 
         self.conv2 = deepcopy(block.conv2)
         self.downsample = deepcopy(block.downsample)
@@ -78,8 +97,7 @@ class QuantizableBasicBlock(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x
 
-        out = self.conv1(x)
-        out = self.relu1(out)
+        out = self.conv_relu1(x)
 
         out = self.conv2(out)
 
