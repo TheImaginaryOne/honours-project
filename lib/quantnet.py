@@ -8,7 +8,7 @@ from lib.math_utils import min_pow_2_scale, quantize_tensor_percentile, get_tens
 
 from lib.layer_tracker import HistogramTracker, Histogram, decide_bounds_min_max, decide_bounds_percentile
 from lib.utils import get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
-from lib.models import QuantisableModule
+from lib.models import CONFIG_SETS, QuantConfig, QuantisableModule
 
 class FakeQuantize(nn.Module):
     def __init__(self, bit_width: int = 8, scale: int = 1):
@@ -24,14 +24,12 @@ class FakeQuantize(nn.Module):
         #print(self.scale, self.bit_width)
         return input
 
+def eval_results(preds: np.ndarray, labels: np.ndarray):
+    """ Evaluate prediction score, given some predictions. """
 
-class QuantConfig:
-    def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
-        # A list of integers, where the nth value denotes the number of bits on the nth quantisable layer
-        # We have two configs for the activation and weight bit widths.
-        self.activation_bit_widths = activation_bit_widths
-        self.weight_bit_widths = weight_bit_widths
+    pred_labels = preds.argmax(axis=1)
 
+    return np.mean(labels == pred_labels)
 
 def assert_equal(a, b):
     assert a == b, f"{a} != {b}"
@@ -93,8 +91,25 @@ def merge_dicts(dict_list):
         result.update(d)
     return result
 
-def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, quant_config_name: str, bounds_config_name: str, ignore_existing_file: bool):
-    output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}_{bounds_config_name}.npy'
+def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader):
+    """ Run net, get predictions. """
+    all_preds = []
+    labels = []
+
+    import tqdm
+    # evaluate network
+    with torch.no_grad():
+        for X, label in tqdm.tqdm(loader):
+            preds = net.get_net()(X)
+            # convert output to numpy
+            preds_np = preds.cpu().detach().numpy()
+            all_preds.append(preds_np)
+            labels.append(label)
+    
+    return np.concatenate(all_preds), np.concatenate(labels)
+
+def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, val_images: torch.utils.data.Dataset, quant_config_name: str, ignore_existing_file: bool):
+    output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}.npy'
     # Skip if the result file exists
     if ignore_existing_file and os.path.exists(output_file_name):
         print(f"{output_file_name} exists; skipping")
@@ -103,31 +118,9 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
     with open(f"output/outputhistogram_{net_name}.pkl", "rb") as f:
         activation_histograms = pickle.load(f)
 
+    configs = CONFIG_SETS
+
     import tqdm
-    configs = {'vgg11': {'8b': QuantConfig([8] * 18, [(8,8)] * 11), 
-            '7b': QuantConfig([7] * 18, [(7,7)] * 11),
-            '6b': QuantConfig([6] * 18, [(6,6)] * 11),
-            '4b': QuantConfig([4] * 18, [(4,4)] * 11),
-            '5b': QuantConfig([5] * 18, [(5,5)] * 11),
-            '8b7b_fc': QuantConfig([8] * 14 + [7] * 4, [(8,8)] * 8 + [(7,7)] * 3),
-            '8b6b_fc': QuantConfig([8] * 14 + [6] * 4, [(8,8)] * 8 + [(6,6)] * 3),
-            '8b5b_fc': QuantConfig([8] * 14 + [5] * 4, [(8,8)] * 8 + [(5,5)] * 3),
-            '8b4b_fc': QuantConfig([8] * 14 + [4] * 4, [(8,8)] * 8 + [(4,4)] * 3)},
-            #'6b4b_1': QuantConfig([6] * 3 + [4] * 9, [(6,6)] * 2 + [(4,4)] * 9),
-            'resnet18': {'8b': QuantConfig([8] * 32, [(8,8)] * 21),
-            '6b': QuantConfig([6] * 32, [(6,6)] * 21),
-            '4b': QuantConfig([4] * 32, [(4,4)] * 21),
-            '8b6b': QuantConfig([8] * 15 + [6] * 17, [(8,8)] * 10 + [(6,6)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
-            '8b4b': QuantConfig([8] * 15 + [4] * 17, [(8,8)] * 10 + [(4,4)] * 11), # 8 bits for first two blocks; 6 bits for next blocks.
-            #'8b4bl': QuantConfig([8] * 30 + [4] * 11, [(8,8)] * 15 + [(4,4)] * 6) # 8 bits for first two blocks; 6 bits for next blocks.
-            },
-            'resnet34': {'8b': QuantConfig([8] * 73, [(8,8)] * 37),
-            '6b': QuantConfig([6] * 73, [(6,6)] * 37),
-            '4b': QuantConfig([4] * 73, [(4,4)] * 37),
-            '8b6b': QuantConfig([8] * 32 + [6] * 41, [(8,8)] * 16 + [(6,6)] * 21), # 8 bits for first two blocks; 6 bits for next blocks.
-            '8b4b': QuantConfig([8] * 32 + [4] * 41, [(8,8)] * 16 + [(4,4)] * 21) # 8 bits for first two blocks; 6 bits for next blocks.
-            },
-            }
     if quant_config_name not in configs[net_name]:
         print("Invalid configuration, try one of", configs.keys())
         return
@@ -142,40 +135,52 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
     # Basically, this is for deciding how to set the range for quantisation.
     # For example '3' means that the 99.99% percentile and 00.001% percentile of values are the minimum and maximum
     # (the values outside these ranges are ignored, and can be "clipped")
-    A_ = {'m': decide_bounds_min_max, '3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000), '6': dbp(1 / 1000000)}
+    AB = {'3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000)}
     # The "bounds" algorithms for weights
-    B_ = {'m': qtp(0.), '3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000), '6': qtp(1 / 1000000)}
-    bounds_configs = merge_dicts([{k1 + '_' + k2: (v1, v2) for (k2, v2) in B_.items()} for (k1, v1) in A_.items()])
+    WB = {'3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000)}
 
-    if bounds_config_name not in bounds_configs:
-        print("Invalid bounds configuration, try one of", bounds_configs.keys())
-        return
-
-    config = configs[net_name][quant_config_name]
+    quant_config = configs[net_name][quant_config_name]
 
     # RUN THE INFERENCE!
     with torch.no_grad():
 
-        bound_algs = bounds_configs[bounds_config_name]
+        val_scores = {}
 
-        quant_net = setup_quant_net(net, activation_histograms, config, bound_algs[0], bound_algs[1])
-        #print(quant_net.get_net())
-        all_preds = []
+        print("Running validation / calibration loop")
+        # validation loop.
+        for k1, ab in AB.items():
+            for k2, wb in WB.items():
+                loader = torch.utils.data.DataLoader(val_images, batch_size=10)
+                candidate_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
+                preds, labels = run_net(candidate_net, loader)
 
+                score = eval_results(preds, labels)
+                key = (k1, k2)
+                print(f"Score for {key}: {score}")
+                val_scores[key] = score
+
+                # save for debugging
+                val_output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}_val_{k1}_{k2}.npy'
+                with open(val_output_file_name, 'wb') as f:
+                    np.save(f, preds)
+        
+        # basically argmax of validation scores.
+        best_bounds_alg = max(val_scores, key=val_scores.get)
+        print(f"Using: {best_bounds_alg}")
+        print("Testing...")
+        ab, wb = AB[best_bounds_alg[0]], WB[best_bounds_alg[1]]
+
+        # TEST!!!
         loader = torch.utils.data.DataLoader(images, batch_size=10)
-        # evaluate network
-        with torch.no_grad():
-            for X in tqdm.tqdm(loader):
-                preds = quant_net.get_net()(X)
-                # convert output to numpy
-                preds_np = preds.cpu().detach().numpy()
-                all_preds.append(preds_np)
+        quant_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
+        preds, labels = run_net(quant_net, loader)
 
+        score = eval_results(preds, labels)
+        print(f"-- Final score: {score}")
 
         with open(output_file_name, 'wb') as f:
-            concated = np.concatenate(all_preds)
             #print(concated.shape)
-            np.save(f, concated)
+            np.save(f, preds)
 
 
 percentiles = {'1e-3': 1 / 1000, '1e-4': 1 / 10000, '1e-5': 1 / 100000, 'm': 0.}

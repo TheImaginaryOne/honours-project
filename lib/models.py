@@ -1,32 +1,56 @@
 import itertools
 from abc import ABC, abstractmethod
 from copy import deepcopy
+from typing import List
 import torch, torchvision
 
-def self_product(l):
-    return list(itertools.chain(*[[n1 + '_' + n2 for n2 in l] for n1 in l]))
+class QuantConfig:
+    def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
+        # A list of integers, where the nth value denotes the number of bits on the nth quantisable layer
+        # We have two configs for the activation and weight bit widths.
+        self.activation_bit_widths = activation_bit_widths
+        self.weight_bit_widths = weight_bit_widths
 
-NAMES = ['m', '3', '4', '5']
-A = ['3', '4', '5', 'm']
+def vggnet_configs():
+    c = {'8b': QuantConfig([8] * 12, [(8, 8)] * 11),\
+        '6b': QuantConfig([6] * 12, [(6, 6)] * 11),
+        '4b': QuantConfig([4] * 12, [(4, 4)] * 11),
+        }
+    
+    N_LAYERS = 11
+    for i in [2, 4, 6, 8, 9, 10]:
+        for b1, b2 in [(8,6),(6,4),(4,2)]:
+            # Note: the (i + 1) is because there are N_LAYER + 1 activations, if we count the input image.
+            c[f"{b1}b_{b2}b_{i}"] = \
+                QuantConfig([b1] * i + [b2] * (N_LAYERS - i + 1), [(b1, b1)] * i + [(b2, b2)] * (N_LAYERS - i))
+    
+    return c
 
-ALL_VGGNET_CONFIGS = itertools.product(["8b", 
-                "6b",
-                "4b",
-                "8b6b_fc",
-                "8b4b_fc",
-                ], self_product(A))
+def resnet18_configs():
+    c = {'8b': QuantConfig([8] * 30, [(8, 8)] * 21),\
+        '6b': QuantConfig([6] * 30, [(6, 6)] * 21),
+        '4b': QuantConfig([4] * 30, [(4, 4)] * 21),
+        }
+    
+    keys = ["l1", "l2", "l3"]
+    
+    N_TRACKED_LAYERS = 30
+    N_QUANT_LAYERS = 21
+    for key, (i, j) in zip(keys, [(7, 5), (14, 10), (21, 15)]):
+        for b1, b2 in [(8,6),(6,4),(8,4)]:
+            # Note: the (i + 1) is because there are N_LAYER + 1 activations, if we count the input image.
+            c[f"{b1}b_{b2}b_{key}"] = \
+                QuantConfig([b1] * i + [b2] * (N_TRACKED_LAYERS - i),\
+                     [(b1, b1)] * j + [(b2, b2)] * (N_QUANT_LAYERS - j))
+    
+    return c
 
-ALL_CONFIGS = itertools.product(["8b", 
-                "6b",
-                "4b",
-                "8b6b",
-                "8b4b",
-                ], self_product(A))
+ALL_VGGNET_CONFIGS = vggnet_configs()
 
 # the product of tabulated sets
-CONFIG_SETS = {'vgg11': {'all': ALL_VGGNET_CONFIGS}, \
-    'resnet18': {'all': ALL_CONFIGS},
-    'resnet34': {'all': ALL_CONFIGS},
+CONFIG_SETS = {'vgg11': vggnet_configs(), \
+    'resnet18': resnet18_configs(),
+    #'resnet34': ALL_CONFIGS,
     } #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
 
 class QuantisableModule(ABC):
@@ -128,7 +152,6 @@ def get_resnet(name):
 
 NETS = {'vgg11': QuantisableVgg11(),
         'resnet18': get_resnet("resnet18"),
-        'resnet34': get_resnet("resnet34"),
         }
 
 def get_net(name: str) -> QuantisableModule:

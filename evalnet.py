@@ -27,13 +27,11 @@ parser_print_net = subparsers.add_parser('print-net')
 parser_test = subparsers.add_parser('test-float')
 parser_log = subparsers.add_parser('log-fixed')
 
-parser_subset_fixed = subparsers.add_parser('test-subset-fixed')
-parser_subset_fixed.add_argument('subset', type=str) #= subparsers.add_parser('test-subset-fixed')
-parser_subset_fixed.add_argument('-i', '--ignore-existing', action=argparse.BooleanOptionalAction) #= subparsers.add_parser('test-subset-fixed')
+parser_test_fixed_all = subparsers.add_parser('test-fixed-all')
+parser_test_fixed_all.add_argument('-i', '--ignore-existing', action=argparse.BooleanOptionalAction) #= subparsers.add_parser('test-subset-fixed')
 
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
-parser_test_fixed.add_argument('bounds', help='the bounds to use', type=str)
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
@@ -44,7 +42,7 @@ def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
 
     all_preds = []
     with torch.no_grad():
-        for X in tqdm.tqdm(loader):
+        for X, _ in tqdm.tqdm(loader):
             preds = net.get_net()(X)
             # convert output to numpy
             preds_np = preds.cpu().detach().numpy()
@@ -83,7 +81,7 @@ def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
     
     loader = DataLoader(image_gen, batch_size=20)
     with torch.no_grad():
-        for X in tqdm.tqdm(loader):
+        for X, _ in tqdm.tqdm(loader):
             preds = net.get_net()(X)
 
     histograms = [Histogram(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
@@ -107,8 +105,9 @@ def get_accuracy(label_file_name, file_name):
 
 def main(args):
     """ Test the network! """
-    val_images_dir = os.getenv("VAL_IMAGES")
-    calib_images_dir = os.getenv("CALIB_IMAGES")
+    test_subset_file = os.getenv("TEST_SUBSET_LIST")
+    val_subset_file = os.getenv("VAL_SUBSET_LIST")
+    images_dir = os.getenv("IMAGES_DIR")
 
     # train loop
     net = get_net(args.net_name)
@@ -116,24 +115,23 @@ def main(args):
     import torch
 
     if args.which == 'log-fixed':
-        testing_files = get_images(calib_images_dir)
-        image_gen = CustomImageData(testing_files)
+        image_gen = get_images(images_dir, val_subset_file)
         get_intermediate(net, args.net_name, image_gen)
     else:
         # contains a chosen subset of images and corresponding labels
-        labels_file = os.getenv("VAL_SUBSET_LIST")
         # the list of image file names
-        testing_files = get_images(val_images_dir, labels_file)
-        image_gen = CustomImageData(testing_files)
+        image_gen = get_images(images_dir, test_subset_file)
+        # generator for validation images
+        val_image_gen = get_images(images_dir, val_subset_file)
         if args.which == 'test-float':
             test_accuracy(net, args.net_name, image_gen)
         elif args.which == 'test-fixed':
-            test_quant(net, args.net_name, image_gen, args.quant_config, args.bounds, False) # in other module
-        elif args.which == "test-subset-fixed":
+            test_quant(net, args.net_name, image_gen, args.quant_config, False) # in other module
+        elif args.which == "test-fixed-all":
             # test the neural net for all configurations
-            for (quant_config, bounds) in CONFIG_SETS[args.net_name][args.subset]:
-                print("Testing:", quant_config, bounds)
-                test_quant(net, args.net_name, image_gen, quant_config, bounds, args.ignore_existing) # in other module
+            for quant_config in CONFIG_SETS[args.net_name]:
+                print("Testing:", quant_config)
+                test_quant(net, args.net_name, image_gen, val_image_gen, quant_config, args.ignore_existing) # in other module
         elif args.which == "print-net":
             print(net.get_net())
             print("-- Layers to track:")

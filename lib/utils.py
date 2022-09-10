@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 import torch
 import PIL
-from typing import Optional
+from typing import List, Optional
 import torchvision
 from torchvision import transforms as T
 from torchvision.transforms import InterpolationMode
@@ -35,7 +35,7 @@ def iter_trackable_modules_helper_(module: torch.nn.Module, parent_name: Optiona
     # the "content" inside, because they are assumed to be one operation in the quantised version.
     seq_leaf_types = [QuantizableConvRelu, torch.nn.intrinsic.modules.ConvReLU2d, torch.nn.intrinsic.modules.LinearReLU]
 
-    ignore = [torch.nn.Identity, torch.nn.Dropout]
+    ignore = [torch.nn.Identity, torch.nn.Dropout, torch.nn.MaxPool2d, torch.nn.AdaptiveAvgPool2d]
     for name, child in module.named_children():
         full_name = name if parent_name is None else f"{parent_name}.{name}"
         # not a leaf; ignore it
@@ -81,32 +81,31 @@ def set_module(model, submodule_key, module):
     setattr(cur_mod, tokens[-1], module)
 
 # ========
-
-# Get image path to tune the classifier quantiser params.
-def get_images(images_dir, labels_file: Optional[str] = None) -> list[str]:
-    if labels_file is not None:
-        with open(labels_file, "r") as f:
-            lines = f.readlines()
-            image_files = [os.path.join(images_dir, l.split()[0]) for l in lines]
-    else:
-        image_files = [os.path.join(images_dir, d) for d in os.listdir(images_dir)]
-    # sort by filenmae only. Important for labels compatibility
-    image_files.sort(key=lambda f: f.split("/")[-1])
-
-    # first is validation; second is testing
-    return image_files
-
 class CustomImageData(torch.utils.data.Dataset):
     
-    def __init__(self, file_paths):
-        self.file_paths = file_paths
-        self.len = len(file_paths)
+    def __init__(self, images_metadata: List[tuple[str, int]]):
+        self.images_metadata = images_metadata
+        self.len = len(images_metadata)
     
     def __getitem__(self, index):
-        file_path = self.file_paths[index]
+        file_path, label = self.images_metadata[index]
         img = PIL.Image.open(file_path).convert('RGB')
         img = process_img(img)
-        return img
+        return img, label
     
     def __len__(self):
         return self.len
+
+# Get image path to tune the classifier quantiser params.
+def get_images(images_dir, labels_file: str) -> CustomImageData:
+    with open(labels_file, "r") as f:
+        lines = f.readlines()
+        images_metadata = []
+        for l in lines:
+            file_name, label = l.split()
+            images_metadata.append((os.path.join(images_dir, file_name), int(label)))
+    # sort by filenmae only. Important for labels compatibility
+    images_metadata.sort(key=lambda f: f[0].split("/")[-1])
+
+    # first is validation; second is testing
+    return CustomImageData(images_metadata)
