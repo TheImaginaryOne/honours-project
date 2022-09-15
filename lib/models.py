@@ -18,8 +18,8 @@ def vggnet_configs():
         }
     
     N_LAYERS = 11
-    for i in [2, 4, 6, 8, 9, 10]:
-        for b1, b2 in [(8,6),(6,4),(4,2)]:
+    for i in [2, 4, 6, 8]:
+        for b1, b2 in [(8,6),(6,4),(8,4)]:
             # Note: the (i + 1) is because there are N_LAYER + 1 activations, if we count the input image.
             c[f"{b1}b_{b2}b_{i}"] = \
                 QuantConfig([b1] * i + [b2] * (N_LAYERS - i + 1), [(b1, b1)] * i + [(b2, b2)] * (N_LAYERS - i))

@@ -35,7 +35,7 @@ parser_test_fixed.add_argument('quant_config', help='the quant config to use', t
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
     loader = DataLoader(image_gen, batch_size=20)
