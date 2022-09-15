@@ -91,7 +91,7 @@ def merge_dicts(dict_list):
         result.update(d)
     return result
 
-def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader):
+def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader, device: str):
     """ Run net, get predictions. """
     all_preds = []
     labels = []
@@ -99,8 +99,9 @@ def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader):
     import tqdm
     # evaluate network
     with torch.no_grad():
+        net.get_net().to(device)
         for X, label in tqdm.tqdm(loader):
-            preds = net.get_net()(X)
+            preds = net.get_net()(X.to(device))
             # convert output to numpy
             preds_np = preds.cpu().detach().numpy()
             all_preds.append(preds_np)
@@ -109,6 +110,9 @@ def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader):
     return np.concatenate(all_preds), np.concatenate(labels)
 
 def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, val_images: torch.utils.data.Dataset, quant_config_name: str, ignore_existing_file: bool):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+
     output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}.npy'
     # Skip if the result file exists
     if ignore_existing_file and os.path.exists(output_file_name):
@@ -150,9 +154,9 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         # validation loop.
         for k1, ab in AB.items():
             for k2, wb in WB.items():
-                loader = torch.utils.data.DataLoader(val_images, batch_size=10)
+                loader = torch.utils.data.DataLoader(val_images, batch_size=32)
                 candidate_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
-                preds, labels = run_net(candidate_net, loader)
+                preds, labels = run_net(candidate_net, loader, device)
 
                 score = eval_results(preds, labels)
                 key = (k1, k2)
@@ -171,9 +175,9 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         ab, wb = AB[best_bounds_alg[0]], WB[best_bounds_alg[1]]
 
         # TEST!!!
-        loader = torch.utils.data.DataLoader(images, batch_size=10)
+        loader = torch.utils.data.DataLoader(images, batch_size=32)
         quant_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
-        preds, labels = run_net(quant_net, loader)
+        preds, labels = run_net(quant_net, loader, device)
 
         score = eval_results(preds, labels)
         print(f"-- Final score: {score}")

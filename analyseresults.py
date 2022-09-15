@@ -1,10 +1,15 @@
+from typing import Optional
 import numpy as np
 import pandas as pd
 import argparse
 import seaborn as sns
 import matplotlib.pyplot as plt
+from adjustText import adjust_text
+import torch
 from tabulate import tabulate
-from lib.models import CONFIG_SETS
+from lib.models import CONFIG_SETS, get_net
+from lib.net_ops import profile_net_bit_ops
+from lib.net_stats import quant_model_size
 
 np.set_printoptions(suppress=True)
 
@@ -45,7 +50,23 @@ def compare():
     print(labels, quant_pred_labels)
     print("top 1 error:", np.mean(labels != quant_pred_labels))
 
-# 
+def scatter_plot(dataframe: pd.DataFrame, x: str, y: str, label: str, ax, hue: Optional[str] = None):
+    if hue != None:
+        p = sns.scatterplot(data=dataframe, x=x, y=y, ax=ax, hue=hue)
+    else:
+        p = sns.scatterplot(data=dataframe, x=x, y=y, ax=ax)
+
+    texts = []
+
+    for line in range(0, dataframe.shape[0]):
+        t = p.text(dataframe[x][line], dataframe[y][line], 
+        dataframe[label][line], horizontalalignment='left', 
+        size='small', color='black')
+        texts.append(t)
+    
+    # https://stackoverflow.com/questions/19073683/how-to-fix-overlapping-annotations-text/34762716#34762716
+    adjust_text(texts, force_points=0.3, arrowprops=dict(arrowstyle='->', color='b', lw=0.5))
+
 def print_set():
     labels_file_name = args.labels_file_name
     # The labels of the images
@@ -56,23 +77,28 @@ def print_set():
 
     dir = "output"
 
+    net = get_net(args.net_name)
+
     # For each configuration, we get the results
-    for quant_config in CONFIG_SETS[args.net_name]:
+    for quant_config_name, quant_config in CONFIG_SETS[args.net_name].items():
         import os
         # load prediction weights
         # Note that the outputs are a numpy table
-        fname = os.path.join(dir, f"quantpreds_{args.net_name}_{quant_config}.npy")
+        fname = os.path.join(dir, f"quantpreds_{args.net_name}_{quant_config_name}.npy")
 
         with open(fname, 'rb') as f:
             quantpreds = np.load(f)
             # in case there is a problem with the shape
             quantpreds = np.reshape(quantpreds, (-1, 1000))
-        
 
         quant_pred_labels = quantpreds.argmax(axis=1)
 
+        model_size = quant_model_size(net, quant_config)
+        
+        model_bit_ops = profile_net_bit_ops(net, quant_config, (1, 3, 224, 224))
+
         # compute the accuracy
-        data.append({"quant_config": quant_config, "acc": np.mean(labels == quant_pred_labels)})
+        data.append({"quant_config": quant_config_name, "acc": np.mean(labels == quant_pred_labels), "model_size": model_size, "model_bit_ops": model_bit_ops})
 
     dataframe = pd.DataFrame(data)
 
@@ -84,20 +110,21 @@ def print_set():
     # dataframe = pd.concat((new_index, dataframe), axis=1)
     # dataframe = pd.melt(dataframe, id_vars=['activations', 'weights'], var_name='bit_config')
 
-    print(dataframe)
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-    sns.barplot(data=dataframe, y='acc', x='quant_config', ax=ax)
-#    for row in g.axes:
-#        for ax in row:
-#            for container in ax.containers:
-#                ax.bar_label(container)
-#                ax.set_xlim(0,1)
-            #ax.annotate("%.2f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()),
-            #     ha='center', va='center', fontsize=11, color='black', xytext=(0, 5),
-            #     textcoords='offset points')
+    dataframe['label'] = dataframe['quant_config'] + dataframe['acc'].map(lambda acc: f"; {acc}")
 
-    plt.savefig(f'output/results_{args.net_name}_all_with_sizes.pdf')
-    #print(tabulate(dataframe, dataframe.columns.values, tablefmt="latex", showindex=False))
+    print(dataframe)
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+    scatter_plot(dataframe, 'model_size', 'acc', 'quant_config', ax[0])
+    scatter_plot(dataframe, 'model_bit_ops', 'acc', 'quant_config', ax[1])
+    fig.tight_layout()
+    fig.savefig(f'output/results_{args.net_name}_all_with_size_and_ops.pdf')
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    scatter_plot(dataframe, 'model_bit_ops', 'model_size', 'label', ax, 'acc')
+    fig.tight_layout()
+    fig.savefig(f'output/{args.net_name}_accuracy_and_size_and_ops.pdf')
+
+plt.style.use('ggplot')
 
 if args.command=="one":
     compare()

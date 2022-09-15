@@ -140,6 +140,7 @@ def main(args):
             print("-- Layers to quantise:")
             for name, child in iter_quantisable_modules_with_names(net.get_net()):
                 print(name, type(child))
+            
         else:
             print("No task selected.")
 

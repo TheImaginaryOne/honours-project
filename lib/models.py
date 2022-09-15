@@ -128,7 +128,7 @@ class QuantizableBasicBlock(torch.nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
 
-        out += identity
+        out = torch.add(out, identity)
         out = self.relu2(out)
 
         return out

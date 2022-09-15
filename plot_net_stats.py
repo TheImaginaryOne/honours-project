@@ -87,12 +87,16 @@ def main(args):
     net = get_net(args.net_name)
 
     quantisable_layers = iter_quantisable_modules_with_names(net.get_net())
+
+    weight_counts = []
+
     for layer_name, layer in quantisable_layers:
-        print("Layer name", layer_name)
         weight_bounds = layer.weight.detach()
-        print("-- Weights size: ", product_of_tuple(weight_bounds.shape))
         bias_bounds = layer.bias.detach()
-        print("-- Bias size: ", product_of_tuple(bias_bounds.shape))
+        weight_counts.append({'layer_name': layer_name, 'weight_size': product_of_tuple(weight_bounds.shape), 'bias_size': product_of_tuple(bias_bounds.shape)})
+
+    weight_counts = pd.DataFrame(weight_counts)
+    weight_counts.to_csv(f"output/{args.net_name}_sizes.csv")
 
     # == Plot weights
     plot_weight_bounds(net)
