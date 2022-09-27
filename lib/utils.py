@@ -8,7 +8,7 @@ import torchvision
 from torchvision import transforms as T
 from torchvision.transforms import InterpolationMode
 
-from lib.models import QuantizableConvRelu
+from lib.models import QuantisableModule, QuantizableConvRelu
 
 normalize = T.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
@@ -79,6 +79,24 @@ def set_module(model, submodule_key, module):
     if not hasattr(cur_mod, tokens[-1]):
         raise RuntimeError(f"attr does not exist: {cur_mod}, {tokens[-1]}")
     setattr(cur_mod, tokens[-1], module)
+
+def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader, device: str):
+    """ Run net, get predictions. """
+    all_preds = []
+    labels = []
+
+    import tqdm
+    # evaluate network
+    with torch.no_grad():
+        net.get_net().to(device)
+        for X, label in tqdm.tqdm(loader):
+            preds = net.get_net()(X.to(device))
+            # convert output to numpy
+            preds_np = preds.cpu().detach().numpy()
+            all_preds.append(preds_np)
+            labels.append(label)
+    
+    return np.concatenate(all_preds), np.concatenate(labels)
 
 # ========
 class CustomImageData(torch.utils.data.Dataset):

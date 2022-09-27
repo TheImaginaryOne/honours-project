@@ -9,10 +9,10 @@ from dotenv import load_dotenv
 import torch
 import torchvision.models as models
 from torch.utils.data import DataLoader
-from lib.utils import iter_quantisable_modules_with_names, process_img, get_images, CustomImageData, get_module,iter_trackable_modules, iter_trackable_modules_with_names
-from lib.models import QuantisableModule, get_net, CONFIG_SETS
+from lib.utils import iter_quantisable_modules_with_names, process_img, get_images, CustomImageData, get_module,iter_trackable_modules, iter_trackable_modules_with_names, run_net
+from lib.models import PERCENTILE_TEST_CONFIG_SETS, QuantisableModule, get_net, CONFIG_SETS
 from lib.layer_tracker import HistogramTracker, Histogram
-from lib.quantnet import test_quant
+from lib.quantnet import test_quant, test_quant_all_percentiles
 
 load_dotenv()
 
@@ -30,31 +30,33 @@ parser_log = subparsers.add_parser('log-fixed')
 parser_test_fixed_all = subparsers.add_parser('test-fixed-all')
 parser_test_fixed_all.add_argument('-i', '--ignore-existing', action=argparse.BooleanOptionalAction) #= subparsers.add_parser('test-subset-fixed')
 
+parser_test_fixed_debug_percentiles = subparsers.add_parser('test-fixed-debug-percentiles')
+parser_test_fixed_debug_percentiles.add_argument('-i', '--ignore-existing', action=argparse.BooleanOptionalAction) #= subparsers.add_parser('test-subset-fixed')
+
 parser_test_fixed = subparsers.add_parser('test-fixed')
 parser_test_fixed.add_argument('quant_config', help='the quant config to use', type=str)
 #parser.add_argument("type", help="which type", type=str, choices=["quant", "normal"])
 args = parser.parse_args()
 
 #os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+def get_device() -> str:
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+    return device
 
 def test_accuracy(net: QuantisableModule, net_name: str, image_gen):
-    loader = DataLoader(image_gen, batch_size=20)
+    device = get_device()
+    loader = DataLoader(image_gen, batch_size=32)
 
-    all_preds = []
-    with torch.no_grad():
-        for X, _ in tqdm.tqdm(loader):
-            preds = net.get_net()(X)
-            # convert output to numpy
-            preds_np = preds.cpu().detach().numpy()
-            all_preds.append(preds_np)
+    preds, _ = run_net(net, loader, device)
 
 
     with open(f'output/floatpreds_{net_name}.npy', 'wb') as f:
-        concated = np.concatenate(all_preds)
-        print(concated.shape)
-        np.save(f, concated)
+        print(preds)
+        np.save(f, preds)
 
 def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
+    device = get_device()
     # Log all activations (outputs) of relevant layers
     # Note: these return names
     modules = list(iter_trackable_modules(net.get_net()))
@@ -66,11 +68,11 @@ def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
 
     def hist_tracker_output_hook(hist_tracker):
         def f(module, input, output):
-            hist_tracker.update(output)
+            hist_tracker.update(output.cpu())
         return f
     def hist_tracker_input_hook(hist_tracker):
         def f(module, input, output):
-            hist_tracker.update(input[0])
+            hist_tracker.update(input[0].cpu())
         return f
 
     # collect statistics of input (ie. first layer's input)
@@ -79,10 +81,8 @@ def get_intermediate(net: QuantisableModule, net_name: str, image_gen):
     for i, layer in enumerate(output_layers):
         layer.register_forward_hook(hist_tracker_output_hook(hist_tracker[i + 1]))
     
-    loader = DataLoader(image_gen, batch_size=20)
-    with torch.no_grad():
-        for X, _ in tqdm.tqdm(loader):
-            preds = net.get_net()(X)
+    loader = DataLoader(image_gen, batch_size=32)
+    _ = run_net(net, loader, device)
 
     histograms = [Histogram(tracker.range_pow_2, tracker.histogram.numpy()) for tracker in hist_tracker]
 
@@ -132,6 +132,11 @@ def main(args):
             for quant_config in CONFIG_SETS[args.net_name]:
                 print("Testing:", quant_config)
                 test_quant(net, args.net_name, image_gen, val_image_gen, quant_config, args.ignore_existing) # in other module
+        elif args.which == "test-fixed-debug-percentiles":
+            # test the neural net for all configurations
+            for quant_config in PERCENTILE_TEST_CONFIG_SETS[args.net_name]:
+                print("Testing:", quant_config)
+                test_quant_all_percentiles(net, args.net_name, image_gen, val_image_gen, quant_config, args.ignore_existing) # in other module
         elif args.which == "print-net":
             print(net.get_net())
             print("-- Layers to track:")

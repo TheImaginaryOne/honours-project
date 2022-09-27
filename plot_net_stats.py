@@ -18,7 +18,7 @@ parser.add_argument("net_name", help="the net to test.", type=str)
 
 args = parser.parse_args()
 
-def plot_bounds_chart(bounds: pd.DataFrame, ax):
+def plot_bounds_chart(bounds: pd.DataFrame, ax, title: str):
     from matplotlib import cm
     # === plot
     cmap = cm.coolwarm
@@ -49,6 +49,7 @@ def plot_bounds_chart(bounds: pd.DataFrame, ax):
         ax.add_collection(ln)
     
     ax.legend(line_collections, reversed(cats), bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0)
+    ax.set_title(title)
 
 def plot_weight_bounds(net):
     bounds = get_net_weight_bounds(net)
@@ -58,11 +59,11 @@ def plot_weight_bounds(net):
 
     #g = sns.catplot(data=weight_bounds, kind="bar", row="type", x="layer_name", y="upper", hue="bounds", height=5, aspect=2)
     fig, ax = plt.subplots(2, 1, figsize=(10, 10))
-    plot_bounds_chart(bounds[bounds['type'] == 'weight'], ax[0])
-    plot_bounds_chart(bounds[bounds['type'] == 'bias'], ax[1])
+    plot_bounds_chart(bounds[bounds['type'] == 'weight'], ax[0], "Weights")
+    plot_bounds_chart(bounds[bounds['type'] == 'bias'], ax[1], "Biases")
 
     fig.tight_layout()
-    fig.savefig(f"output/{args.net_name}_bounds.png")
+    fig.savefig(f"output/{args.net_name}_bounds.pdf")
 
 def plot_act_bounds(net_name, net):
     bounds = get_net_activation_bounds(args.net_name, net)
@@ -72,10 +73,10 @@ def plot_act_bounds(net_name, net):
 
     fig, ax = plt.subplots(figsize=(10, 7))
     #sns.lineplot(data=bounds, x="layer_name", x="upper", hue="bounds", ax=ax)#, log=True)
-    plot_bounds_chart(bounds, ax)
+    plot_bounds_chart(bounds, ax, "Activations")
     fig.tight_layout()
 
-    fig.savefig(f"output/{args.net_name}_act_bounds.png")
+    fig.savefig(f"output/{args.net_name}_act_bounds.pdf")
 
 import functools
 def product_of_tuple(l: Tuple[int]):
@@ -98,7 +99,7 @@ def main(args):
     weight_counts = pd.DataFrame(weight_counts)
     weight_counts.to_csv(f"output/{args.net_name}_sizes.csv")
 
-    # == Plot weights
+    # == Plot network parameters
     plot_weight_bounds(net)
 
     # == Plot activation histograms

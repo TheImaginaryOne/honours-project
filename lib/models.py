@@ -4,6 +4,8 @@ from copy import deepcopy
 from typing import List
 import torch, torchvision
 
+def dict_subset(d: dict, keys: List[str]):
+    return {k: d[k] for k in keys}
 class QuantConfig:
     def __init__(self, activation_bit_widths: List[int], weight_bit_widths: List[tuple[int, int]]):
         # A list of integers, where the nth value denotes the number of bits on the nth quantisable layer
@@ -52,6 +54,9 @@ CONFIG_SETS = {'vgg11': vggnet_configs(), \
     'resnet18': resnet18_configs(),
     #'resnet34': ALL_CONFIGS,
     } #, 'fa': ALL_NET_CONFIGS_FA, 'fw': ALL_NET_CONFIGS_FW}
+
+PERCENTILE_TEST_CONFIG_SETS = {'vgg11': dict_subset(vggnet_configs(), ["8b", "6b", "8b_6b_8", "8b_4b_8", "6b_4b_8"]),\
+    'resnet18': dict_subset(resnet18_configs(), ["8b", "6b", "8b_6b_l2", "8b_4b_l2"])}
 
 class QuantisableModule(ABC):
     @abstractmethod

@@ -18,9 +18,9 @@ def run():
         labels_dict = {s.split()[0]: s.split()[1] for s in label_f.readlines()}
 
     # get a subset so there are N of each class label
-    N = 10
+    N = 45
     # validation set
-    N_VAL = 1
+    N_VAL = 5
     subset_test = []
     subset_val = []
     label_counter = Counter()

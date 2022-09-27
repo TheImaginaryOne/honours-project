@@ -7,8 +7,8 @@ from typing import Any, List, cast, Callable
 from lib.math_utils import min_pow_2_scale, quantize_tensor_percentile, get_tensor_percentile
 
 from lib.layer_tracker import HistogramTracker, Histogram, decide_bounds_min_max, decide_bounds_percentile
-from lib.utils import get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, set_module
-from lib.models import CONFIG_SETS, QuantConfig, QuantisableModule
+from lib.utils import get_module, iter_quantisable_modules_with_names, iter_trackable_modules, iter_trackable_modules_with_names, run_net, set_module
+from lib.models import CONFIG_SETS, PERCENTILE_TEST_CONFIG_SETS, QuantConfig, QuantisableModule
 
 class FakeQuantize(nn.Module):
     def __init__(self, bit_width: int = 8, scale: int = 1):
@@ -91,23 +91,53 @@ def merge_dicts(dict_list):
         result.update(d)
     return result
 
-def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader, device: str):
-    """ Run net, get predictions. """
-    all_preds = []
-    labels = []
+
+def qtp(tail):
+    return lambda input, bit_width: quantize_tensor_percentile(input, bit_width, tail, 1 - tail)
+def dbp(tail):
+    return lambda cdf: decide_bounds_percentile(cdf, tail)
+import itertools
+
+def test_quant_all_percentiles(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, val_images: torch.utils.data.Dataset, quant_config_name: str, ignore_existing_file: bool):
+    """ Run test for different percentile configs; no validation loop """
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+
+    with open(f"output/outputhistogram_{net_name}.pkl", "rb") as f:
+        activation_histograms = pickle.load(f)
+
+    configs = PERCENTILE_TEST_CONFIG_SETS
 
     import tqdm
-    # evaluate network
+    if quant_config_name not in configs[net_name]:
+        print("Invalid configuration, try one of", configs.keys())
+        return
+
+    quant_config = configs[net_name][quant_config_name]
+
+    AB = {'3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000), 'm': decide_bounds_min_max}
+    # The "bounds" algorithms for weights
+    WB = {'3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000), 'm': qtp(0.)}
     with torch.no_grad():
-        net.get_net().to(device)
-        for X, label in tqdm.tqdm(loader):
-            preds = net.get_net()(X.to(device))
-            # convert output to numpy
-            preds_np = preds.cpu().detach().numpy()
-            all_preds.append(preds_np)
-            labels.append(label)
-    
-    return np.concatenate(all_preds), np.concatenate(labels)
+        # validation loop.
+        for k1, ab in AB.items():
+            for k2, wb in WB.items():
+                val_output_file_name = f'output/quantpreds_{net_name}_{quant_config_name}_test_{k1}_{k2}.npy'
+                # Skip if the result file exists
+                if ignore_existing_file and os.path.exists(val_output_file_name):
+                    print(f"{val_output_file_name} exists; skipping")
+                    continue
+
+                loader = torch.utils.data.DataLoader(images, batch_size=64)
+                candidate_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
+                preds, labels = run_net(candidate_net, loader, device)
+
+                score = eval_results(preds, labels)
+                key = (k1, k2)
+                print(f"Score for {key}: {score}")
+
+                with open(val_output_file_name, 'wb') as f:
+                    np.save(f, preds)
 
 def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.Dataset, val_images: torch.utils.data.Dataset, quant_config_name: str, ignore_existing_file: bool):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -124,17 +154,6 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
 
     configs = CONFIG_SETS
 
-    import tqdm
-    if quant_config_name not in configs[net_name]:
-        print("Invalid configuration, try one of", configs.keys())
-        return
-
-    def qtp(tail):
-        return lambda input, bit_width: quantize_tensor_percentile(input, bit_width, tail, 1 - tail)
-    def dbp(tail):
-        return lambda cdf: decide_bounds_percentile(cdf, tail)
-
-    import itertools
     # The "bounds" algorithms for activations.
     # Basically, this is for deciding how to set the range for quantisation.
     # For example '3' means that the 99.99% percentile and 00.001% percentile of values are the minimum and maximum
@@ -142,6 +161,11 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
     AB = {'3': dbp(1 / 1000), '4': dbp(1 / 10000), '5': dbp(1 / 100000)}
     # The "bounds" algorithms for weights
     WB = {'3': qtp(1 / 1000), '4': qtp(1 / 10000), '5': qtp(1 / 100000)}
+
+    import tqdm
+    if quant_config_name not in configs[net_name]:
+        print("Invalid configuration, try one of", configs.keys())
+        return
 
     quant_config = configs[net_name][quant_config_name]
 
@@ -154,7 +178,7 @@ def test_quant(net: QuantisableModule, net_name: str, images: torch.utils.data.D
         # validation loop.
         for k1, ab in AB.items():
             for k2, wb in WB.items():
-                loader = torch.utils.data.DataLoader(val_images, batch_size=32)
+                loader = torch.utils.data.DataLoader(val_images, batch_size=64)
                 candidate_net = setup_quant_net(net, activation_histograms, quant_config, ab, wb)
                 preds, labels = run_net(candidate_net, loader, device)
 
