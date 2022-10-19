@@ -98,6 +98,13 @@ def run_net(net: QuantisableModule, loader: torch.utils.data.DataLoader, device:
     
     return np.concatenate(all_preds), np.concatenate(labels)
 
+def get_readable_layer_names(net_name, layer_names):
+    if net_name == 'vgg11':
+        return [f'features {i}' for i in range(1,9)] + [f'classifier {i}' for i in [1,2,3]]
+    else:
+        layer_names = [n.replace(".", " ").replace("conv_relu1 ", "") for n in layer_names]
+        return layer_names
+
 # ========
 class CustomImageData(torch.utils.data.Dataset):
     

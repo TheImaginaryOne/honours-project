@@ -9,7 +9,7 @@ import torchsummary
 from lib.quantnet import get_net_activation_bounds, get_net_weight_bounds
 
 from lib.models import get_net
-from lib.utils import iter_quantisable_modules_with_names
+from lib.utils import get_readable_layer_names, iter_quantisable_modules_with_names
 
 from collections import OrderedDict
 
@@ -55,6 +55,7 @@ def plot_weight_bounds(net):
     bounds = get_net_weight_bounds(net)
 
     bounds = pd.DataFrame(bounds, columns=['layer_name', 'bounds', 'type', 'lower', 'upper'])
+    bounds['layer_name'] = get_readable_layer_names(args.net_name, bounds['layer_name'])
     print(bounds)
 
     #g = sns.catplot(data=weight_bounds, kind="bar", row="type", x="layer_name", y="upper", hue="bounds", height=5, aspect=2)
@@ -69,6 +70,7 @@ def plot_act_bounds(net_name, net):
     bounds = get_net_activation_bounds(args.net_name, net)
 
     bounds = pd.DataFrame(bounds, columns=['layer_name', 'bounds', 'lower', 'upper'])
+    bounds['layer_name'] = get_readable_layer_names(args.net_name, bounds['layer_name'])
     print(bounds)
 
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -97,6 +99,7 @@ def main(args):
         weight_counts.append({'layer_name': layer_name, 'weight_size': product_of_tuple(weight_bounds.shape), 'bias_size': product_of_tuple(bias_bounds.shape)})
 
     weight_counts = pd.DataFrame(weight_counts)
+    weight_counts['layer_name'] = get_readable_layer_names(args.net_name, weight_counts['layer_name'])
     weight_counts.to_csv(f"output/{args.net_name}_sizes.csv")
 
     # == Plot network parameters

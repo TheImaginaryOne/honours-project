@@ -136,7 +136,6 @@ def profile_net_bit_ops(net: QuantisableModule, quant_config: QuantConfig, input
         if module_type in PROFILERS:
             module.register_forward_hook(PROFILERS[module_type])
 
-    
     quant_net.apply(register_profiler)
 
     _ = quant_net(dummy_input)

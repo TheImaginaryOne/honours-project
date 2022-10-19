@@ -7,6 +7,7 @@ from lib.models import get_net
 
 from lib.net_ops import profile_net_mac_ops
 from lib.net_stats import get_model_layer_sizes
+from lib.utils import get_readable_layer_names
 
 parser = argparse.ArgumentParser("quant-net")
 parser.add_argument("net_name", help="the net to test.", type=str)
@@ -18,7 +19,6 @@ def main(args):
 
     net = get_net(args.net_name)
 
-    
     mac_ops = profile_net_mac_ops(net, (1, 3, 224, 224))
     mac_ops = pd.DataFrame(mac_ops)
 
@@ -28,6 +28,7 @@ def main(args):
     print(mac_ops, sizes)
 
     df = mac_ops.merge(sizes, on='layer_name', how='outer')
+    df['layer_name'] = get_readable_layer_names(args.net_name, df['layer_name'])
     print(df)
 
     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
